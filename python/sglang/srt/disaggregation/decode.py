@@ -216,7 +216,7 @@ class DecodeReqToTokenPool(ReqToTokenPool):
 
     def clear(self):
         self.free_slots = list(range(1, self._alloc_size))
-        self.req_generation.zero_()
+        # req_generation must stay monotonic; see ReqToTokenPool.clear().
 
 
 class HybridMambaDecodeReqToTokenPool(HybridReqToTokenPool):
