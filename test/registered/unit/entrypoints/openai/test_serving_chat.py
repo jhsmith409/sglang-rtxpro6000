@@ -1565,6 +1565,7 @@ class ServingChatTestCase(unittest.TestCase):
             content=content,
             request=request,
             index=0,
+            created=123,
         )
 
         # Should return a chunk with remaining arguments
@@ -1618,6 +1619,7 @@ class ServingChatTestCase(unittest.TestCase):
             content=content,
             request=request,
             index=0,
+            created=123,
         )
 
         # Should return None since no completion is needed
@@ -1656,6 +1658,7 @@ class ServingChatTestCase(unittest.TestCase):
             content=content,
             request=request,
             index=0,
+            created=123,
         )
 
         self.assertIsNone(result, "Should not append encoded quotes")
@@ -1691,6 +1694,7 @@ class ServingChatTestCase(unittest.TestCase):
             content=content,
             request=request,
             index=0,
+            created=123,
         )
 
         self.assertIsNotNone(result, "Should return chunk with remaining arguments")
@@ -1726,6 +1730,7 @@ class ServingChatTestCase(unittest.TestCase):
             content=content,
             request=request,
             index=0,
+            created=123,
         )
 
         # Should return None since there's no parser data
@@ -2077,6 +2082,7 @@ class ServingChatTestCase(unittest.TestCase):
                     content={"meta_info": {"id": "chatcmpl-test"}},
                     request=req,
                     has_tool_calls={},
+                    created=123,
                 )
                 # Get first yielded SSE line
                 line = None
@@ -2553,12 +2559,41 @@ class ServingChatTestCase(unittest.TestCase):
                 parsed.append(json.loads(c[len("data: ") :]))
         return parsed
 
+    def test_streaming_created_is_stable_across_chunks(self):
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "Hi?"}],
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+
+        with patch(
+            "sglang.srt.entrypoints.openai.serving_chat.time.time",
+            side_effect=[100, 101, 102, 103],
+        ) as current_time:
+            chunks = self._run_chat_stream(Mock(), req)
+
+        parsed = self._parse_chunks(chunks)
+        self.assertGreater(len(parsed), 1)
+        identities = {
+            (chunk["id"], chunk["created"], chunk["model"]) for chunk in parsed
+        }
+        self.assertEqual(len(identities), 1)
+        response_id, created, model = identities.pop()
+        self.assertTrue(response_id)
+        self.assertEqual((created, model), (100, "x"))
+        self.assertTrue(
+            any(not chunk["choices"] and chunk.get("usage") for chunk in parsed)
+        )
+        current_time.assert_called_once_with()
+
     async def _collect_stream_content(self, content, choice_logprobs, req):
         chunks = []
         async for chunk in self.chat._generate_stream_content(
             content=content,
             index=0,
             request=req,
+            created=123,
             stream_offsets={},
             reasoning_parser_dict={},
             parser_dict={},
@@ -3209,6 +3244,7 @@ class ServingChatTestCase(unittest.TestCase):
                 content=content,
                 index=0,
                 request=req,
+                created=123,
                 stream_offsets={},
                 reasoning_parser_dict={},
                 parser_dict={},
