@@ -33,6 +33,7 @@ from sglang.srt.function_call.llama32_detector import Llama32Detector
 from sglang.srt.function_call.mistral_detector import MistralDetector
 from sglang.srt.function_call.pythonic_detector import PythonicDetector
 from sglang.srt.function_call.qwen3_coder_detector import Qwen3CoderDetector
+from sglang.srt.function_call.utils import get_schema_properties
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=20, suite="base-a-test-cpu")
@@ -5750,6 +5751,130 @@ class TestGemma4Detector(unittest.TestCase):
         params1 = json.loads(tool_calls_by_index[1]["parameters"])
         self.assertEqual(params0["location"], "Paris")
         self.assertEqual(params1["timezone"], "UTC")
+
+
+class TestGetSchemaProperties(unittest.TestCase):
+    def test_flat_properties(self):
+        schema = {"type": "object", "properties": {"a": {"type": "string"}}}
+        self.assertEqual(get_schema_properties(schema), {"a": {"type": "string"}})
+
+    def test_top_level_combinators(self):
+        schema = {
+            "type": "object",
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"const": "acme"},
+                        "payload": {"type": "object"},
+                    },
+                },
+                {"type": "object", "properties": {"kind": {"const": "other"}}},
+            ],
+        }
+        # duplicate keys resolve to the first branch that declares them
+        self.assertEqual(
+            get_schema_properties(schema),
+            {"kind": {"const": "acme"}, "payload": {"type": "object"}},
+        )
+
+    def test_anyof_allof_and_nesting(self):
+        anyof = {
+            "anyOf": [{"properties": {"x": {"type": "integer"}}}, {"type": "null"}]
+        }
+        self.assertEqual(get_schema_properties(anyof), {"x": {"type": "integer"}})
+        allof = {
+            "allOf": [
+                {"oneOf": [{"properties": {"y": {"type": "boolean"}}}]},
+                {"properties": {"z": {"type": "string"}}},
+            ]
+        }
+        self.assertEqual(
+            get_schema_properties(allof),
+            {"y": {"type": "boolean"}, "z": {"type": "string"}},
+        )
+
+    def test_non_dict_and_missing(self):
+        self.assertEqual(get_schema_properties(None), {})
+        self.assertEqual(
+            get_schema_properties(
+                {"type": "object"},
+            ),
+            {},
+        )
+        self.assertEqual(get_schema_properties({"oneOf": "not-a-list"}), {})
+
+
+class TestTopLevelCompositeToolSchema(unittest.TestCase):
+    """Parsers must resolve argument types when tool ``parameters`` declares
+    its properties under a top-level anyOf/oneOf/allOf instead of directly."""
+
+    def setUp(self):
+        self.oneof_tools = [
+            Tool(
+                type="function",
+                function=Function(
+                    name="acme",
+                    description="Send a value to Acme.",
+                    parameters={
+                        "type": "object",
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "kind": {"const": "acme"},
+                                    "payload": {
+                                        "type": "object",
+                                        "properties": {
+                                            "value": {"type": "string"},
+                                        },
+                                        "required": ["value"],
+                                    },
+                                },
+                                "required": ["kind", "payload"],
+                            },
+                            {
+                                "type": "object",
+                                "properties": {"kind": {"const": "other"}},
+                                "required": ["kind"],
+                            },
+                        ],
+                    },
+                ),
+            ),
+        ]
+        self.qwen_text = (
+            "<tool_call><function=acme>"
+            "<parameter=kind>acme</parameter>"
+            '<parameter=payload>{"value": "hello"}</parameter>'
+            "</function></tool_call>"
+        )
+        self.expected = {"kind": "acme", "payload": {"value": "hello"}}
+
+    def _stream_arguments(self, detector, text, tools, chunk_size=8):
+        name = None
+        arguments = ""
+        for i in range(0, len(text), chunk_size):
+            result = detector.parse_streaming_increment(text[i : i + chunk_size], tools)
+            for call in result.calls:
+                if call.name:
+                    name = call.name
+                arguments += call.parameters
+        return name, arguments
+
+    def test_qwen3_coder_detect_and_parse(self):
+        detector = Qwen3CoderDetector()
+        result = detector.detect_and_parse(self.qwen_text, self.oneof_tools)
+        self.assertEqual(len(result.calls), 1)
+        self.assertEqual(json.loads(result.calls[0].parameters), self.expected)
+
+    def test_qwen3_coder_streaming(self):
+        detector = Qwen3CoderDetector()
+        name, arguments = self._stream_arguments(
+            detector, self.qwen_text, self.oneof_tools
+        )
+        self.assertEqual(name, "acme")
+        self.assertEqual(json.loads(arguments), self.expected)
 
 
 if __name__ == "__main__":
