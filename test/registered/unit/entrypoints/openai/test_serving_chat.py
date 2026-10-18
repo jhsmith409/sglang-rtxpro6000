@@ -103,6 +103,7 @@ class _MockTokenizerManager:
             reasoning_parser=None,
             stream_response_default_include_usage=False,
             default_chat_template_kwargs=None,
+            trust_request_chat_template=False,
         )
         self.model_path = self.server_args.model_path
         # The manager tracks the served name itself; a weight update rewrites it.
@@ -4000,6 +4001,43 @@ class InklingReasoningEffortTest(unittest.TestCase):
             prompt_ids[-1],
             INKLING_SPECIAL_TOKEN_IDS["<|content_model_end_sampling|>"],
         )
+
+
+
+class TestRequestChatTemplateTrustGate(unittest.TestCase):
+    def setUp(self):
+        self.tm = _MockTokenizerManager()
+        self.chat = OpenAIServingChat(self.tm, _MockTemplateManager())
+
+    def _request(self, **kwargs):
+        return ChatCompletionRequest(
+            model="test-model", messages=[{"role": "user", "content": "hi"}], **kwargs
+        )
+
+    def test_rejected_by_default(self):
+        for template in ("{{ messages }}", "", None):
+            with self.subTest(template=template):
+                error = self.chat._validate_request(
+                    self._request(chat_template_kwargs={"chat_template": template})
+                )
+                self.assertIn("--trust-request-chat-template", error)
+
+    def test_allowed_when_trusted(self):
+        self.tm.server_args.trust_request_chat_template = True
+        self.assertIsNone(
+            self.chat._validate_request(
+                self._request(chat_template_kwargs={"chat_template": "{{ messages }}"})
+            )
+        )
+
+    def test_other_kwargs_unchanged(self):
+        for kwargs in (None, {}, {"enable_thinking": False}, {"chat_templates": "x"}):
+            with self.subTest(kwargs=kwargs):
+                self.assertIsNone(
+                    self.chat._validate_request(
+                        self._request(chat_template_kwargs=kwargs)
+                    )
+                )
 
 
 if __name__ == "__main__":
