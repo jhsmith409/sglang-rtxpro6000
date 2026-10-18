@@ -1908,7 +1908,11 @@ def _load_image(
                     "Failed to decode JPEG on GPU, falling back to CPU. Error: %s",
                     e,
                 )
-    return Image.open(BytesIO(image_bytes))
+    try:
+        return Image.open(BytesIO(image_bytes))
+    except (OSError, SyntaxError) as e:
+        # Truncated or malformed client bytes: a request error, not a server fault.
+        raise ValueError(f"Could not decode image: {e}") from e
 
 
 def load_image(
