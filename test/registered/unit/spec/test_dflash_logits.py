@@ -15,6 +15,7 @@ from sglang.srt.models.dflash import (
     CandidateSelector,
     DFlash2DraftModel,
     _grouped_conv,
+    _radix_topk,
 )
 from sglang.srt.speculative.dflash_utils import parse_dflash_draft_config
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -219,6 +220,22 @@ def test_selector_gathers_global_candidates_across_vocab_shards(monkeypatch):
     torch.testing.assert_close(unary_logits, expected_logits.float())
 
 
+def _use_cpu_top_k(monkeypatch):
+    """Keep every candidate-projection fixture off the device-bound top-k.
+
+    ``_radix_topk`` prefers an installed FlashInfer kernel, and that kernel asks
+    for the compute capability of the tensor's device, so on a runner with
+    FlashInfer importable a CPU fixture fails with "device must be a cuda device"
+    before anything about the projection is checked. The contract-pinning
+    stand-in below is a CPU implementation of the same call, so the rowwise FP8
+    numerics, the padded-vocab masking and the global-index assertions are what
+    these tests exercise on every runner. No CUDA parity is claimed here.
+    """
+    monkeypatch.setattr(
+        "sglang.srt.models.dflash._flashinfer_top_k", _flashinfer_contract_topk
+    )
+
+
 def _rowwise_fp8_head(dense: torch.Tensor):
     """A target head in the resident Flash-Next representation: BF16 checkpoint
     values quantized once to E4M3 with one FP32 scale per output channel, behind
@@ -244,11 +261,39 @@ def _rowwise_reference(hidden, head):
     return (hidden.bfloat16() @ dense.T).float()
 
 
+def test_candidate_fixtures_pin_their_top_k_against_an_installed_flashinfer(
+    monkeypatch,
+):
+    """The pin above is load-bearing, not decoration.
+
+    On thegrid FlashInfer is installed, so ``_radix_topk`` reaches its kernel and
+    that kernel refuses CPU tensors with "device must be a cuda device" — a
+    fixture that stopped pinning its top-k would fail there for a reason that has
+    nothing to do with the projection under test. This checks both halves: the
+    device-bound call really does refuse these tensors, and the helper the
+    fixtures use replaces it with a CPU implementation.
+    """
+
+    def _device_bound_top_k(scores, k, *, sorted=False, deterministic=False):
+        assert sorted and deterministic
+        raise ValueError("device must be a cuda device")
+
+    monkeypatch.setattr(
+        "sglang.srt.models.dflash._flashinfer_top_k", _device_bound_top_k
+    )
+    with pytest.raises(ValueError, match="device must be a cuda device"):
+        _radix_topk(torch.randn(4, 6), 2)
+
+    _use_cpu_top_k(monkeypatch)
+    _radix_topk(torch.randn(4, 6), 2)
+
+
 def test_selector_projects_the_scaled_rowwise_fp8_target_head(monkeypatch):
     """The accepted Flash-Next head is resident E4M3 plus a per-channel scale, so
     the candidate projection has to run the target's own rowwise kernel on it:
     the scale must stay attached to the weight, the padded tail must stay out of
     the top-k, and no BF16 copy of the head may appear."""
+    _use_cpu_top_k(monkeypatch)
     hidden = torch.randn(40, 4, dtype=torch.bfloat16)
     torch.manual_seed(0)
     head = _rowwise_fp8_head(
@@ -282,6 +327,7 @@ def test_selector_projects_the_scaled_rowwise_fp8_target_head(monkeypatch):
 def test_selector_gathers_global_candidates_across_rowwise_fp8_shards(monkeypatch):
     """Same global-index contract on the rowwise head as on the quantized one:
     per-shard org restriction, shard offset before the gather, fp32 upcast."""
+    _use_cpu_top_k(monkeypatch)
     k = 4
     hidden = torch.randn(40, 4, dtype=torch.bfloat16)
     torch.manual_seed(3)
@@ -342,6 +388,7 @@ def test_selector_keeps_the_dense_head_on_the_plain_matmul(monkeypatch):
     monkeypatch.setattr(
         "sglang.srt.models.dflash.rowwise_fp8_lm_head_logits", _no_fp8_kernel
     )
+    _use_cpu_top_k(monkeypatch)
     monkeypatch.setattr(
         "sglang.srt.models.dflash.get_parallel", lambda: SimpleNamespace(tp_size=1)
     )
