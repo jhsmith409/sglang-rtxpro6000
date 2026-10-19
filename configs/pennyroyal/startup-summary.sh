@@ -70,7 +70,13 @@ pennyroyal_startup_summary() {
         ple='no host offload requested'
       fi
       ;;
-    DFLASH) profile='Qwen3.8-27B / DFlash2' ;;
+    DFLASH)
+      # Two DFlash2 launches run this same algorithm against different targets,
+      # and the path alone does not say which is which, so the recipe names
+      # itself. The default keeps the 27B report for the recipe that predates
+      # the label.
+      profile="${PENNYROYAL_PROFILE_LABEL:-Qwen3.8-27B / DFlash2}"
+      ;;
     *) profile="${setting[--speculative-algorithm]:-no speculation}" ;;
   esac
   [[ -z ${setting[--speculative-token-map]:-} ]] || frspec=on

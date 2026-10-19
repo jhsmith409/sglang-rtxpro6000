@@ -16,6 +16,7 @@ Your host
   run.sh                  image, GPUs, port, user and host mount paths
   config/
     start-flash-next-frspec.sh  model and SGLang startup settings
+    start-flash-next-dflash2.sh alternative Flash-Next + DFlash2 startup settings
     start-27b-dflash2.sh   alternative 27B + draft startup settings
     nixl-posix-frspec.toml      disk-cache settings
   model files             mounted read-only at /models
@@ -54,7 +55,7 @@ BASE="https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/$RELEASE_REF
 mkdir -p pennyroyal/config
 cd pennyroyal
 curl -fL "$BASE/run.sh" -o run.sh
-for file in start-flash-next.sh start-flash-next-frspec.sh start-27b-dflash2.sh nixl-posix.toml nixl-posix-frspec.toml; do
+for file in start-flash-next.sh start-flash-next-frspec.sh start-flash-next-dflash2.sh start-27b-dflash2.sh nixl-posix.toml nixl-posix-frspec.toml; do
   curl -fL "$BASE/config/$file" -o "config/$file"
 done
 chmod +x run.sh
@@ -63,6 +64,7 @@ chmod +x run.sh
 The source files are also available here: [run.sh](launch/run.sh),
 [recommended Flash-Next FR-Spec startup](launch/config/start-flash-next-frspec.sh),
 [optional non-FR startup](launch/config/start-flash-next.sh),
+[Flash-Next DFlash2 startup](launch/config/start-flash-next-dflash2.sh),
 [27B startup](launch/config/start-27b-dflash2.sh), and
 [FR-Spec NIXL settings](launch/config/nixl-posix-frspec.toml).
 
@@ -74,8 +76,8 @@ Create the host directories and make them writable by that identity.
 
 In the selected startup file, set `TARGET_MODEL` to its path **inside** the
 container. For example, if `/srv/models` is mounted at `/models`, the host's
-`/srv/models/MyCheckpoint` becomes `/models/MyCheckpoint`. The 27B startup
-also needs `DRAFT_MODEL`. RAM cache size, tensor-parallel size, request capacity,
+`/srv/models/MyCheckpoint` becomes `/models/MyCheckpoint`. The 27B and
+Flash-Next DFlash2 startups also need `DRAFT_MODEL`. RAM cache size, tensor-parallel size, request capacity,
 PLE placement and image preprocessing are in this startup file.
 
 <a id="profiles-and-checks"></a>
@@ -84,6 +86,7 @@ PLE placement and image preprocessing are in this startup file.
 |---|---|
 | Flash-Next, native NEXTN MTP with FR-Spec (recommended) | `config/start-flash-next-frspec.sh` |
 | Flash-Next without FR-Spec (alternative) | `config/start-flash-next.sh` |
+| Flash-Next with DFlash2 (new, unmeasured) | `config/start-flash-next-dflash2.sh` |
 | 27B FP8 with DFlash2 | `config/start-27b-dflash2.sh` |
 
 For TP2, expose both RTX PRO 6000 GPUs in `run.sh` and set `TP_SIZE=2` in the

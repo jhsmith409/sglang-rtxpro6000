@@ -509,6 +509,10 @@ def prepared_config(
                 f'TARGET_MODEL="{target}"',
             ),
             ('TARGET_MODEL="/models/Qwen3.8-27B-FP8"', f'TARGET_MODEL="{target}"'),
+            (
+                'DRAFT_MODEL="/models/incoai-Qwen3.8-Flash-Next-DFlash2"',
+                f'DRAFT_MODEL="{draft}"',
+            ),
             ('DRAFT_MODEL="/models/Qwen3.8-27B-DFlash2"', f'DRAFT_MODEL="{draft}"'),
             ("NIXL=on\n", f"NIXL={nixl}\n"),
         ):
@@ -585,12 +589,14 @@ def test_examples_are_editable_startup_files_with_container_paths(tmp_path):
     assert (LAUNCH / "run.sh").is_file()
     assert sorted(path.name for path in CONFIGS.glob("start-*.sh")) == [
         "start-27b-dflash2.sh",
+        "start-flash-next-dflash2.sh",
         "start-flash-next-frspec.sh",
         "start-flash-next.sh",
     ]
     for name in (
         "start-flash-next.sh",
         "start-flash-next-frspec.sh",
+        "start-flash-next-dflash2.sh",
         "start-27b-dflash2.sh",
     ):
         text = (CONFIGS / name).read_text()

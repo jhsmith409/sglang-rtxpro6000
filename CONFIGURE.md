@@ -70,9 +70,13 @@ and manage the files yourself. Restart the server to apply changed settings.
 ## What the settings mean
 
 - **Profile:** Flash-Next with native MTP and FR-Spec (`next`), the optional
-  non-FR alternative (`next-plain`), or 27B with its DFlash2 draft. FR-Spec and
-  adaptive MTP work together; they are not competing profile choices. The 27B
-  profile needs both model folders.
+  non-FR alternative (`next-plain`), 27B with its DFlash2 draft, or Flash-Next
+  with the Flash-Next DFlash2 draft (`next-dflash2`). FR-Spec and
+  adaptive MTP work together; they are not competing profile choices. The two
+  DFlash2 profiles need both model folders; `next-dflash2` also asks for nothing
+  in place of the FR-Spec map, because it drafts against the full target
+  vocabulary. See [RUN.md](RUN.md#launch-flash-next-with-dflash2) for what is and
+  is not qualified there.
 - **GPUs:** choose the inference device(s), TP size and optional image-processing
   device. TP2 needs two RTX PRO 6000 inference GPUs; a sidecar remains separate.
 - **HiCache:** RAM prefix-cache size in decimal GB. Profile defaults are 32 GB

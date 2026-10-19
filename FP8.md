@@ -36,7 +36,10 @@ mixed-MXFP8 build and cannot claim rowwise-FP8 caches.
 The conversion supports recognized Flash-Next modules on exact SM120. Other
 hardware and module shapes keep the original path automatically; explicit
 requests for them fail loudly. The 27B/DFlash2 launcher keeps its existing
-precision path.
+precision path. The Flash-Next DFlash2 launcher (`PENNYROYAL_PROFILE=next-dflash2`)
+drafts from this converted head: it is part of that profile's cache identity, and
+a launch that resolved to the untouched BF16 weights gets its own namespace
+rather than sharing one.
 
 ### Donor W8A16 GEMV for the output heads
 
@@ -61,7 +64,7 @@ checkpoint loads. Generation uses the converted weights.
 |---|---|
 | Eligible otherwise-unquantized Flash-Next transformer projections | Row-wise (per-output-channel) FP8 weights with dynamic activations — the donor-compatible representation, arithmetic unchanged from the accepted candidate |
 | HyperConnection mix weights | Row-wise FP8 weights with one scale per output row; prefill materializes transient BF16 operands for the existing compiled path |
-| Output head | Row-wise FP8 weights with aligned per-row scales; the FR-Spec draft shares the converted target head safely |
+| Output head | Row-wise FP8 weights with aligned per-row scales; the FR-Spec draft shares the converted target head safely, and the Flash-Next DFlash2 candidate projection reuses the same kernel on the same resident weights (no BF16 copy, no second format) |
 | NVFP4 experts and expert routing | Preserved from the checkpoint |
 | PLE table and PLE projection | Preserved; RAM or optional NVMe placement is a separate choice |
 | QSA representation | Preserved in its existing format |

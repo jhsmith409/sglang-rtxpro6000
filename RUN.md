@@ -19,7 +19,8 @@ from the inference cards.
 
 Start with [Common setup](#common-setup), then choose
 [Flash-Next with FR-Spec](#launch-flash-next-with-fr-spec), the
-[optional non-FR alternative](#launch-flash-next-without-fr-spec-alternative), or
+[optional non-FR alternative](#launch-flash-next-without-fr-spec-alternative),
+[Flash-Next with DFlash2](#launch-flash-next-with-dflash2), or
 [27B with DFlash2](#launch-27b-with-dflash2). Stop and restart the server after
 changing configuration.
 
@@ -411,6 +412,40 @@ export TARGET_MODEL=/path/to/RadixArk-Qwen3.8-Flash-Next-NVFP4
 | Linear attention | Explicit FlashInfer GDN decode/prefill, FP16-accumulate MMA mode |
 
 The online-FP8 and PLE-placement options also apply to this recipe.
+
+## Launch Flash-Next with DFlash2
+
+`PENNYROYAL_PROFILE=next-dflash2` runs the same accepted Flash-Next NVFP4 target
+against the separate `incoai/Qwen3.8-Flash-Next-DFlash2` draft, still on the
+full target vocabulary:
+
+```bash
+cd "$REPO_ROOT"
+export TARGET_MODEL=/path/to/RadixArk-Qwen3.8-Flash-Next-NVFP4
+export DRAFT_MODEL=/path/to/incoai-Qwen3.8-Flash-Next-DFlash2
+"$REPO_ROOT/configs/pennyroyal/serve-flash-next-dflash2.sh"
+```
+
+| Setting | Flash-Next/DFlash2 value |
+|---|---|
+| Target | ModelOpt NVFP4 weights and activations on selected Linear modules |
+| Target output head | Rowwise FP8 E4M3 with one FP32 scale per channel (the online-FP8 conversion the target's own logits path uses; the draft reuses it) |
+| Draft weights | BF16, unquantized (`--speculative-draft-model-quantization unquant`) |
+| Speculation | DFLASH; block 4 by default, `SPECULATIVE_NUM_DRAFT_TOKENS=8` for the checkpoint's own block size; no FR-Spec map, no adaptive policy |
+| Target features | Completed layers 5, 15, 25, 35 and 45, averaged over the four hyper-connection streams (5 x 2,560 into the draft's `fc`) |
+| Draft context | 2,048-token trained window; 524,288-position extension from this draft's own `rope_theta` 10000 and 262,144-token base |
+| Target verification | Triton linear-attention verify (`--linear-attn-verify-backend triton`) |
+| State and host cache | 36 Mamba slots for 6 requests; RecoverSSM `none`; 32 GB HiCache; NIXL POSIX |
+
+This launch path is new and unmeasured on RTX PRO 6000: the model card's numbers
+were taken against the official FP8 target on one GB300 at TP1 with block 4, so
+they say nothing about NVFP4, SM120, concurrency 6, a 524,288-token context,
+HiCache/NIXL, block 8, or the uncensored target Penny serves. Treat the profile
+as functional-but-unqualified: confirm the resolved token pool and request
+admission in the startup output, and measure acceptance and throughput yourself
+before drawing a conclusion. TP1 is the only topology the target-feature capture
+accepts; `TP_SIZE=2` stops at boot rather than averaging a different set of
+streams per rank.
 
 ## CPU, model-GPU, or secondary-GPU media preprocessing
 
