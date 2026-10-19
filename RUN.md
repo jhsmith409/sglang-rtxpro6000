@@ -90,10 +90,11 @@ leaves the target vocabulary and acceptance policy unchanged. Gabriel's
 [`gabrielolympie/sglang-flashnext-sm120`](https://github.com/gabrielolympie/sglang-flashnext-sm120)
 is the source of the reduced-vocabulary work.
 
-The extra BF16 draft head uses 320 MiB. The recipe defaults to 824,384 KV
-tokens, 524,288-token context, four concurrent requests, and 24 Mamba slots.
-During startup, confirm the token map, reduced draft head, graphs, and state
-pools in the resolved server output.
+The extra BF16 draft head uses 320 MiB. The recipe sizes the KV pool from the
+memory that remains after the weights and graphs, and uses 524,288-token
+context, four concurrent requests, and 24 Mamba slots; the qualified single-GPU
+boot retained 824,384 KV tokens. During startup, confirm the token map, reduced
+draft head, graphs, and state pools in the resolved server output.
 
 ## Launch 27B with DFlash2
 
@@ -215,8 +216,9 @@ YaRN/mRoPE implementation. Keep them in the checkpoint configuration.
 
 For Flash-Next, confirm:
 
-- 824,384 target/native-MTP KV tokens by default, or the resolved value for an
-  explicit cap, with FP8 E4M3 dtypes;
+- the profiled target/native-MTP KV token count (824,384 on the qualified
+  single-GPU boot), or the resolved value for an explicit cap, with FP8 E4M3
+  dtypes;
 - four running requests and 24 Mamba slots by default, or six requests and 36
   slots for the optional C6 profile, with zero intermediate speculative SSM;
 - `FlashInferGDNKernel` decode/prefill and
@@ -351,17 +353,18 @@ context. Post-graph free memory was 5.21 GiB; the lowest media sample was
 
 The option changes KV capacity; context remains 524,288 tokens. Use CPU media
 preprocessing with this pool to leave more GPU memory for requests.
-Unset `MAX_TOTAL_TOKENS` to return to the 824,384-token FR-Spec default.
-The non-FR recipe uses automatic sizing when unset and accepts the same kind of
-page-aligned override. See
+Leave `MAX_TOTAL_TOKENS` unset or blank and both Flash-Next recipes size the
+pool from the memory they profile; 824,384 tokens is what the qualified
+single-GPU boot retained, not a value the launcher asks for. See
 [RESULTS.md](RESULTS.md#explicit-1000000-token-capacity-option) for timings.
 
 ## Optional six-request Flash-Next profile
 
 For longer concurrent conversations, Flash-Next can use six running requests
 and a larger shared KV pool while keeping 524,288 tokens per request. The
-FR-Spec defaults remain four requests, 24 Mamba slots, and 824,384 KV tokens. Set the
-C6 values before launching either Flash-Next recipe:
+FR-Spec defaults remain four requests and 24 Mamba slots with the KV pool
+sized automatically. Set the C6 values before launching either Flash-Next
+recipe:
 
 ```bash
 export SGLANG_MM_PREPROCESS_DEVICE=cpu
