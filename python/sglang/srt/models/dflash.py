@@ -11,6 +11,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from sglang.kernels.ops.gemm.sm120_online_fp8 import rowwise_fp8_lm_head_logits
 from sglang.kernels.ops.speculative.dflash import selector_walk_triton
 from sglang.srt.configs.laguna import normalize_gating
 from sglang.srt.distributed.communication_op import tensor_model_parallel_all_gather
@@ -43,6 +44,7 @@ from sglang.srt.speculative.dflash_utils import (
     get_dflash_layer_types,
     is_dense_head_weight,
     is_nemotron_35_draft_config,
+    is_rowwise_fp8_head_weight,
     parse_dflash_draft_config,
 )
 from sglang.srt.utils import is_npu, set_weight_attrs
@@ -86,16 +88,27 @@ def _logical_linear_weight_shape(
 
 
 def _project_candidate_logits(
-    hidden: torch.Tensor, lm_head: nn.Module, *, num_org: int, use_quant_head: bool
+    hidden: torch.Tensor,
+    lm_head: nn.Module,
+    *,
+    num_org: int,
+    use_quant_head: bool,
+    use_rowwise_fp8_head: bool = False,
 ) -> torch.Tensor:
     """Project draft hiddens through the target head, restricted to the org vocab."""
-    if not use_quant_head:
+    if not (use_quant_head or use_rowwise_fp8_head):
         weight = lm_head.weight
         return torch.matmul(hidden.to(weight.dtype), weight[:num_org].T)
-    # A packed weight can't be row-sliced to the org vocab like the dense path,
-    # and flashinfer's radix top-k rejects the crop view (non-contiguous), so
-    # mask the padded tail out of the top-k instead.
-    logits = lm_head.quant_method.apply(lm_head, hidden, None).contiguous()
+    # A packed or rowwise-quantized weight can't be row-sliced to the org vocab
+    # like the dense path, and flashinfer's radix top-k rejects the crop view
+    # (non-contiguous), so mask the padded tail out of the top-k instead.
+    if use_rowwise_fp8_head:
+        # The accepted rowwise head: the target's own kernel, on the resident
+        # weight, so its per-channel scales keep their meaning. No dequantized
+        # copy, and no second representation of the target weights.
+        logits = rowwise_fp8_lm_head_logits(hidden, lm_head.weight).contiguous()
+    else:
+        logits = lm_head.quant_method.apply(lm_head, hidden, None).contiguous()
     if logits.shape[-1] > num_org:
         logits[:, num_org:] = float("-inf")
     return logits
@@ -1106,16 +1119,24 @@ class DFlash2DraftModel(DFlashDraftModel):
         weight = getattr(self.lm_head, "weight", None)
         quant_method = getattr(self.lm_head, "quant_method", None)
         use_quant_head = should_apply_lm_head_quant_method(self.lm_head, quant_method)
-        if not use_quant_head and not is_dense_head_weight(weight):
+        # Checked after the quant method, which wins when a head has one: this is
+        # the representation Flash-Next installs on an otherwise-unquantized head.
+        use_rowwise_fp8_head = not use_quant_head and is_rowwise_fp8_head_weight(weight)
+        if not (use_quant_head or use_rowwise_fp8_head or is_dense_head_weight(weight)):
             raise RuntimeError(
-                "DFlash2 selector requires a dense FP16/BF16/FP32 target lm_head "
-                "or a supported lm_head.quant_method."
+                "DFlash2 selector requires a dense FP16/BF16/FP32 target lm_head, "
+                "a supported lm_head.quant_method, or a rowwise-FP8 head carrying "
+                "its per-channel scale."
             )
         if get_parallel().tp_size == 1:
             org = int(self.lm_head.org_vocab_size)
             vals, ids = _radix_topk(
                 _project_candidate_logits(
-                    hidden, self.lm_head, num_org=org, use_quant_head=use_quant_head
+                    hidden,
+                    self.lm_head,
+                    num_org=org,
+                    use_quant_head=use_quant_head,
+                    use_rowwise_fp8_head=use_rowwise_fp8_head,
                 ),
                 k,
             )
@@ -1127,6 +1148,7 @@ class DFlash2DraftModel(DFlashDraftModel):
                 self.lm_head,
                 num_org=int(shard.num_org_elements),
                 use_quant_head=use_quant_head,
+                use_rowwise_fp8_head=use_rowwise_fp8_head,
             ),
             k,
         )

@@ -51,6 +51,7 @@ from sglang.srt.speculative.dflash_utils import (
     compute_dflash_sampling_correct_drafts_and_bonus,
     is_dense_head_weight,
     is_dflash_sampling_verify_available,
+    is_rowwise_fp8_head_weight,
     parse_dflash_draft_config,
 )
 from sglang.srt.speculative.draft_worker_common import (
@@ -508,11 +509,18 @@ class DFlashWorkerV2(BaseSpecWorker):
         if self.selector is not None:
             # compute_candidates needs the target lm_head attached before capture.
             # A gate-admitted quantized head is capture-safe: the target's own
-            # logits path already runs the same kernel under CUDA graphs.
-            if not is_dense_head_weight(
-                getattr(lm_head, "weight", None)
-            ) and not should_apply_lm_head_quant_method(
-                lm_head, getattr(lm_head, "quant_method", None)
+            # logits path already runs the same kernel under CUDA graphs. The
+            # rowwise-FP8 head Flash-Next converts to qualifies for the same
+            # reason, and it stays resident -- the candidate projection reads the
+            # scales carried on the weight, so sharing the target Parameter cannot
+            # separate a quantized head from its representation.
+            head_weight = getattr(lm_head, "weight", None)
+            if not (
+                is_dense_head_weight(head_weight)
+                or should_apply_lm_head_quant_method(
+                    lm_head, getattr(lm_head, "quant_method", None)
+                )
+                or is_rowwise_fp8_head_weight(head_weight)
             ):
                 return _eager("unsupported quantized lm_head")
             self.draft_model.lm_head = lm_head

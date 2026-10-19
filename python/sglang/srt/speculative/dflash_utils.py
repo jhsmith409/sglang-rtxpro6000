@@ -738,6 +738,26 @@ def is_dense_head_weight(weight: Any) -> bool:
     return weight is not None and weight.dtype in _DENSE_HEAD_DTYPES
 
 
+def is_rowwise_fp8_head_weight(weight: Any) -> bool:
+    """Whether an lm_head weight is Flash-Next's resident rowwise-FP8 head.
+
+    ``qwen4_exp.post_load_weights`` converts the head to E4M3 with one FP32 scale
+    per output channel, and the scale travels on the tensor itself because the
+    module's method stays the unquantized one the NVFP4 checkpoint shipped with
+    (``lm_head`` is on its skip-list). So neither ``is_dense_head_weight`` nor
+    ``should_apply_lm_head_quant_method`` describes this head, and it must not be
+    mistaken for one: a dense matmul would read the codes as weights, and the
+    only correct projection is the kernel the target's own logits path uses.
+    """
+    from sglang.kernels.ops.gemm.sm120_online_fp8 import rowwise_scale_of
+
+    return (
+        weight is not None
+        and weight.dtype is torch.float8_e4m3fn
+        and rowwise_scale_of(weight) is not None
+    )
+
+
 def can_dflash_slice_qkv_weight(qkv_proj: Any) -> Tuple[bool, str]:
     """Validate whether DFlash can slice KV weights from a fused QKV linear layer."""
     quant_method = getattr(qkv_proj, "quant_method", None)
