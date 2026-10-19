@@ -4074,6 +4074,40 @@ class TestRequestChatTemplateTrustGate(unittest.TestCase):
                     )
                 )
 
+    def _render(self, **kwargs):
+        rendered = MessageProcessingResult(
+            prompt="prompt",
+            prompt_ids=[1, 2, 3],
+            image_data=None,
+            audio_data=None,
+            video_data=None,
+            modalities=[],
+            stop=[],
+        )
+        with patch.object(
+            self.chat, "_apply_conversation_template", return_value=rendered
+        ) as render:
+            self.chat._process_messages(self._request(**kwargs), is_multimodal=False)
+        return render
+
+    def test_process_messages_rejects_untrusted_template(self):
+        # /v1/responses, /v1/tokenize and the Anthropic handler reach this
+        # shared preprocessing step without going through _validate_request,
+        # so the policy has to hold here too, before anything is rendered.
+        with self.assertRaises(ValueError) as ctx:
+            self._render(chat_template_kwargs={"chat_template": "{{ messages }}"})
+        self.assertIn("--trust-request-chat-template", str(ctx.exception))
+
+    def test_process_messages_renders_trusted_template(self):
+        self.tm.server_args.trust_request_chat_template = True
+        render = self._render(chat_template_kwargs={"chat_template": "{{ messages }}"})
+        render.assert_called_once()
+
+    def test_process_messages_renders_ordinary_kwargs(self):
+        for kwargs in (None, {}, {"enable_thinking": False}, {"chat_templates": "x"}):
+            with self.subTest(kwargs=kwargs):
+                self._render(chat_template_kwargs=kwargs)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

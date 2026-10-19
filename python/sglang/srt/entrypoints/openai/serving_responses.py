@@ -322,6 +322,10 @@ class OpenAIServingResponses(OpenAIServingChat):
             return self.create_error_response(str(e))
         except (ValueError, TypeError, RuntimeError, jinja2.TemplateError) as e:
             logger.exception("Error in preprocessing prompt inputs")
+            # A rejected request has no cause to append, and "None" in the
+            # client-facing message reads like a failure of the check itself.
+            if e.__cause__ is None:
+                return self.create_error_response(str(e))
             return self.create_error_response(f"{e} {e.__cause__}")
 
         request_metadata = RequestResponseMetadata(request_id=request.request_id)

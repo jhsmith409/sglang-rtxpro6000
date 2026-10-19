@@ -865,11 +865,18 @@ class OpenAIServingChat(OpenAIServingBase):
             and self.tool_call_parser
         )
 
-    def _validate_request(self, request: ChatCompletionRequest) -> Optional[str]:
-        """Validate that the input is valid."""
-        if not request.messages:
-            return "Messages cannot be empty."
+    def _chat_template_trust_error(
+        self, request: ChatCompletionRequest
+    ) -> Optional[str]:
+        """One template-trust policy for every route that renders messages.
 
+        A request's chat_template kwargs are splatted into apply_chat_template,
+        so a request-supplied template replaces the server's pinned one unless
+        the operator opted in with --trust-request-chat-template. Checked at
+        request validation and again in _process_messages, the shared
+        preprocessing step that /v1/responses, /v1/tokenize and the Anthropic
+        handler call without going through this class's validation.
+        """
         if (
             request.chat_template_kwargs
             and "chat_template" in request.chat_template_kwargs
@@ -879,6 +886,16 @@ class OpenAIServingChat(OpenAIServingBase):
                 "Request-supplied chat_template is not allowed. Start the server "
                 "with --trust-request-chat-template to permit it."
             )
+        return None
+
+    def _validate_request(self, request: ChatCompletionRequest) -> Optional[str]:
+        """Validate that the input is valid."""
+        if not request.messages:
+            return "Messages cannot be empty."
+
+        template_error = self._chat_template_trust_error(request)
+        if template_error:
+            return template_error
 
         if request.return_sampling_mask and not request.return_meta_info:
             return "return_sampling_mask requires return_meta_info=true."
@@ -1120,6 +1137,13 @@ class OpenAIServingChat(OpenAIServingBase):
         request_first_reasoning_effort: bool = False,
     ) -> MessageProcessingResult:
         """Process chat messages and apply chat template"""
+        template_error = self._chat_template_trust_error(request)
+        if template_error:
+            # A route that preprocesses without validating still cannot render
+            # a template the operator did not trust. Callers map ValueError to
+            # a 400 for this request.
+            raise ValueError(template_error)
+
         if self.default_chat_template_kwargs:
             ctk = dict(request.chat_template_kwargs or {})
             for k, v in self.default_chat_template_kwargs.items():

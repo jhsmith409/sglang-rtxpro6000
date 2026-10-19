@@ -1124,5 +1124,68 @@ class StreamingLogprobsRejectionTestCase(CustomTestCase):
         self.assertIn("streaming mode", body["error"]["message"])
 
 
+class TemplateTrustTestCase(CustomTestCase):
+    """The trust gate covers the Responses preprocessing path too.
+
+    ``chat_template_kwargs`` is splatted into ``apply_chat_template``, so a
+    request-supplied template is the server's template unless the operator
+    opted in, on every route that renders messages.
+    """
+
+    def _serving(self, *, trusted):
+        serving = make_serving()
+        serving.tokenizer_manager.server_args.trust_request_chat_template = trusted
+        serving.default_chat_template_kwargs = None
+        serving.template_manager.chat_template_name = None
+        serving.template_manager.jinja_template_content_format = "string"
+        serving.tokenizer_manager.tokenizer.apply_chat_template.return_value = (
+            "rendered"
+        )
+        return serving
+
+    def _make_request(self, serving, chat_template_kwargs):
+        request = ResponsesRequest(
+            model="x", input="hi", chat_template_kwargs=chat_template_kwargs
+        )
+        asyncio.run(
+            serving._make_request(request, None, serving.tokenizer_manager.tokenizer)
+        )
+        return serving.tokenizer_manager.tokenizer.apply_chat_template.call_args.kwargs
+
+    def test_untrusted_chat_template_is_rejected_before_generation(self):
+        serving = self._serving(trusted=False)
+        response = asyncio.run(
+            serving.create_responses(
+                ResponsesRequest(
+                    model="x",
+                    input="hi",
+                    store=False,
+                    chat_template_kwargs={"chat_template": "{{ messages }}"},
+                )
+            )
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"--trust-request-chat-template", response.body)
+        serving.tokenizer_manager.generate_request.assert_not_called()
+
+    def test_trusted_chat_template_reaches_the_template(self):
+        serving = self._serving(trusted=True)
+        kwargs = self._make_request(serving, {"chat_template": "{{ messages }}"})
+        self.assertEqual(kwargs["chat_template"], "{{ messages }}")
+
+    def test_ordinary_template_kwargs_still_pass_through(self):
+        for chat_template_kwargs in (
+            None,
+            {},
+            {"enable_thinking": False},
+            {"chat_templates": "x"},
+            {"reasoning_effort": "low"},
+        ):
+            with self.subTest(chat_template_kwargs=chat_template_kwargs):
+                serving = self._serving(trusted=False)
+                kwargs = self._make_request(serving, chat_template_kwargs)
+                self.assertNotIn("chat_template", kwargs)
+
+
 if __name__ == "__main__":
     unittest.main()
