@@ -38,6 +38,13 @@ DENSE_ARCH = {
     "model_type": "qwen3_5",
     "text_config": {"model_type": "qwen3_5_text"},
 }
+# Both DFlash2 drafts ship as DFlash2DraftModel over a Qwen3 backbone; the
+# metadata names Pennyroyal compares on are the draft's own.
+DFLASH2_ARCH = {
+    "architectures": ["DFlash2DraftModel"],
+    "model_type": "qwen3",
+    "dflash_config": {"target_layer_ids": [5, 15, 25, 35, 45]},
+}
 
 
 def make_executable(path: Path, body: str) -> None:
@@ -102,11 +109,13 @@ class FixtureMixin(unittest.TestCase):
         self.next_model = self.models / "Flash Next [v1]"
         self.dense_model = self.models / "Qwen3.8-27B-FP8 (block)"
         self.draft_model = self.models / "DFlash2 $draft"
+        self.next_draft = self.models / "Flash Next DFlash2 (draft)"
         self.custom_model = self.models / "custom-quant $'odd'"  # spaces, $ and quotes
         for directory, payload in (
             (self.next_model, NEXT_ARCH),
             (self.dense_model, DENSE_ARCH),
             (self.draft_model, DENSE_ARCH),
+            (self.next_draft, DFLASH2_ARCH),
             (self.custom_model, {"architectures": ["CustomQuantForCausalLM"]}),
         ):
             directory.mkdir(parents=True)
@@ -1290,6 +1299,99 @@ class SetupSessionTests(FixtureMixin):
         self.assertEqual(code, 3, output)
         self.assertIn("clear mixup", output)
         self.assertFalse(path.exists())
+
+    def run_draft_profile_setup(
+        self, answers: list[str], **kwargs
+    ) -> tuple[int, str, Path]:
+        """run_setup, but an EOF names the skipped question instead of masking it.
+
+        A profile whose draft question is skipped consumes one answer too many
+        further down the script, and the session then dies at EOF; that is the
+        defect, so say so rather than reporting an unexplained Cancelled.
+        """
+        try:
+            return self.run_setup(answers, **kwargs)
+        except ps.Cancelled as exc:
+            return self.fail(
+                "the wizard stopped before finishing (a question this profile "
+                f"needs was skipped, or the answers fell out of step): {exc}"
+            )
+
+    def test_next_dflash2_asks_for_the_draft_its_recipe_requires(self):
+        # The wizard, not just the plan builder: skipping DRAFT_MODEL left a
+        # fresh next-dflash2 setup writing a file that only failed the
+        # required-draft check at launch time.
+        code, output, path = self.run_draft_profile_setup(
+            ["next-dflash2"]
+            + self.basics(str(self.next_model), draft=str(self.next_draft))
+            + ["n", "y"]
+        )
+        self.assertEqual(code, 0, output)
+        self.assertIn(pc.KEY_SPECS["DRAFT_MODEL"].prompt, output)
+        saved = pc.read_env_file(path)
+        self.assertEqual(saved[pc.PROFILE_KEY], "next-dflash2")
+        self.assertEqual(saved["DRAFT_MODEL"], str(self.next_draft))
+        plan = pc.build_plan(
+            "native", pc.load_config("native", path, {}, self.repo), {}
+        )
+        self.assertEqual(plan.errors, [])
+
+    def test_next_dflash2_reasks_a_blank_draft(self):
+        # The draft is required for this profile: an empty answer is refused and
+        # asked again, so the wizard cannot write a file that its own recipe
+        # rejects at launch.
+        answers = self.basics(str(self.next_model), draft="")
+        # basics() puts the draft answer after the target; the re-ask answer goes
+        # right behind the refused blank.
+        answers.insert(4, str(self.next_draft))
+        code, output, path = self.run_draft_profile_setup(
+            ["next-dflash2"] + answers + ["n", "y"]
+        )
+        self.assertEqual(code, 0, output)
+        self.assertEqual(output.count(pc.KEY_SPECS["DRAFT_MODEL"].prompt), 2)
+        self.assertEqual(pc.read_env_file(path)["DRAFT_MODEL"], str(self.next_draft))
+
+    def test_switching_from_27b_reasks_the_draft_and_a_new_path_replaces_it(self):
+        # Carrying the saved 27B draft into a Flash-Next draft silently drafts
+        # the wrong model: switching profiles has to surface the question.
+        existing = (
+            f"{pc.PROFILE_KEY}=27b\n"
+            f"TARGET_MODEL={pc.quote_value(str(self.dense_model))}\n"
+            f"DRAFT_MODEL={pc.quote_value(str(self.draft_model))}\n"
+            f"CACHE_BASE={pc.quote_value(str(self.cache))}\n"
+            f"NIXL_STORAGE_BASE={pc.quote_value(str(self.nixl))}\n"
+        )
+        code, output, path = self.run_setup(
+            ["next-dflash2"]
+            + self.basics(str(self.next_model), draft=str(self.next_draft))
+            + ["n", "y"],
+            existing=existing,
+        )
+        self.assertEqual(code, 0, output)
+        self.assertIn(pc.KEY_SPECS["DRAFT_MODEL"].prompt, output)
+        saved = pc.read_env_file(path)
+        self.assertEqual(saved[pc.PROFILE_KEY], "next-dflash2")
+        self.assertEqual(saved["TARGET_MODEL"], str(self.next_model))
+        self.assertEqual(saved["DRAFT_MODEL"], str(self.next_draft))
+
+    def test_nextn_profiles_still_neither_ask_nor_drop_the_draft(self):
+        # Preservation: NEXTN drafts with the target's own MTP layer, so the
+        # question stays hidden, and a draft left in the file by an earlier
+        # 27b choice is carried through untouched rather than deleted.
+        existing = (
+            f"{pc.PROFILE_KEY}=27b\n"
+            f"TARGET_MODEL={pc.quote_value(str(self.dense_model))}\n"
+            f"DRAFT_MODEL={pc.quote_value(str(self.draft_model))}\n"
+            f"CACHE_BASE={pc.quote_value(str(self.cache))}\n"
+            f"NIXL_STORAGE_BASE={pc.quote_value(str(self.nixl))}\n"
+        )
+        code, output, path = self.run_setup(
+            ["next-plain"] + self.basics(str(self.next_model)) + ["n", "y"],
+            existing=existing,
+        )
+        self.assertEqual(code, 0, output)
+        self.assertNotIn(pc.KEY_SPECS["DRAFT_MODEL"].prompt, output)
+        self.assertEqual(pc.read_env_file(path)["DRAFT_MODEL"], str(self.draft_model))
 
     def test_27b_never_offers_a_knob_its_recipe_pins(self):
         # The wizard asks about what the selected profile can actually honour:

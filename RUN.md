@@ -440,12 +440,13 @@ export DRAFT_MODEL=/path/to/incoai-Qwen3.8-Flash-Next-DFlash2
 This launch path is new and unmeasured on RTX PRO 6000: the model card's numbers
 were taken against the official FP8 target on one GB300 at TP1 with block 4, so
 they say nothing about NVFP4, SM120, concurrency 6, a 524,288-token context,
-HiCache/NIXL, block 8, or the uncensored target Penny serves. Treat the profile
-as functional-but-unqualified: confirm the resolved token pool and request
-admission in the startup output, and measure acceptance and throughput yourself
-before drawing a conclusion. TP1 is the only topology the target-feature capture
-accepts; `TP_SIZE=2` stops at boot rather than averaging a different set of
-streams per rank.
+HiCache/NIXL, block 8, or the uncensored target Penny serves. The profile is
+implemented and CPU-checked, but this launch has not yet been started on target
+hardware: it is not runtime-validated. Confirm the resolved token pool and
+request admission in the startup output on your first boot, then measure
+acceptance and throughput yourself before drawing a conclusion. TP1 is the only
+topology the target-feature capture accepts; `TP_SIZE=2` stops at boot rather
+than averaging a different set of streams per rank.
 
 ## CPU, model-GPU, or secondary-GPU media preprocessing
 
