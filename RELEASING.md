@@ -48,6 +48,7 @@ qualification or reverse John's decision to reuse the 27B checks for 3.0.
 
 - [ ] Board matches what shipped, what remains and what was deferred.
 - [ ] Review related issues for replies or closure, and carry out the agreed actions.
+- [ ] Every release change has an associated PR. Before submission, each maintainer-submitted PR covers one functional item with its related tests and documentation; record any explicitly approved exception on the release item.
 - [ ] Every included PR has a disposition: merged, incorporated with changes, or deferred.
 - [ ] Accepted contributor work goes through its original PR wherever possible. Necessary corrections are made there before merge.
 - [ ] Release acknowledgements name direct Penny Royal contributors and community interaction; source notices and upstream lineage stay in their existing records.
