@@ -44,5 +44,6 @@ class TestUnifiedRadixLockRefScenarios(unittest.TestCase):
         self.assertEqual(kwargs, {"start_pos": 0})
         cache._dec_req_lock.assert_not_called()
 
+
 if __name__ == "__main__":
     unittest.main()

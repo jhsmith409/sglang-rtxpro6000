@@ -4039,7 +4039,6 @@ class InklingReasoningEffortTest(unittest.TestCase):
         )
 
 
-
 class TestRequestChatTemplateTrustGate(unittest.TestCase):
     def setUp(self):
         self.tm = _MockTokenizerManager()
