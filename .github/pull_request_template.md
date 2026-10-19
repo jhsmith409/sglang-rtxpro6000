@@ -25,6 +25,7 @@
 
 ## Checklist
 
+- [ ] I submitted one functional item per pull request, with its related tests and documentation; a different item goes in a separate pull request.
 - [ ] I described the impact on both supported profiles, including why one is unaffected when applicable.
 - [ ] I included focused correctness evidence appropriate to the change.
 - [ ] I documented user-visible behavior, configuration, or provenance changes.
