@@ -880,9 +880,7 @@ class UnifiedRadixCache(BasePrefixCache):
                 start_pos=req.cache_protected_len,
             )
 
-        # Synthetic profiling requests may own KV without locking a tree node.
-        if req.last_node is not None:
-            self._dec_req_lock(req, skip_swa=req.swa_prefix_lock_released)
+        self._dec_req_lock(req, skip_swa=req.swa_prefix_lock_released)
 
         if is_insert and result is not None and result.last_device_node is not None:
             req.last_node = result.last_device_node
