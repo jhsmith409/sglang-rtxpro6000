@@ -206,9 +206,11 @@ pennyroyal_check_tp_devices "$TP_SIZE" "$SGLANG_MM_PREPROCESS_DEVICE"
 # durable cache locations before selecting the optional backend.
 source "$IMAGE_CONFIGS/ple-backend.sh"
 # No KV-token preset: unset or blank MAX_TOTAL_TOKENS (including the empty
-# value Compose forwards) leaves the pool to the engine's memory-based sizing.
-# A deliberate -e MAX_TOTAL_TOKENS=<page-aligned value> stays opt-in and is
-# still validated; 824,384 is the qualified measurement, not a request.
+# value Compose forwards) leaves the pool to the sizing SGLang profiles from
+# the free memory, within the static memory fraction the launch line sets. A
+# deliberate -e MAX_TOTAL_TOKENS=<page-aligned value> stays opt-in and is still
+# validated; the qualified 824,384 tokens were the cap that boot asked for, and
+# an uncapped FR-Spec pool has not been measured.
 configure_max_total_tokens
 
 TARGET_OVERRIDES='{"text_config":{"rope_parameters":{"mrope_interleaved":true,"mrope_section":[11,11,10],"rope_type":"yarn","rope_theta":10000000,"partial_rotary_factor":0.25,"factor":2.0,"original_max_position_embeddings":262144}}}'

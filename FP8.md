@@ -115,8 +115,9 @@ unquantized projection structure.
   observations, and the C4 outputs did not all have the same length.
 - The observed standard-pool VRAM difference is useful headroom. Those runs
   carried the recipe's then-default 824,384-token cap; the FR-Spec recipe now
-  leaves the pool to memory-based sizing and takes a cap only when
-  `MAX_TOTAL_TOKENS` is supplied. An explicit 1,000,000-token pool was
+  leaves the pool to the sizing SGLang profiles from the memory the launch
+  leaves it, within the configured static memory fraction, and takes a cap only
+  when `MAX_TOTAL_TOKENS` is supplied. An explicit 1,000,000-token pool was
   separately tested with RAM PLE, CPU media preprocessing and one visible GPU,
   leaving 5.21 GiB after graphs and at least 1,187 MiB in the sampled media
   window. Served context remains 524,288 tokens; no speed comparison was run.
