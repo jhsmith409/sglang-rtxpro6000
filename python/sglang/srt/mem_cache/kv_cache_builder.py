@@ -345,6 +345,15 @@ def build_kv_cache(
     embedding_cache_size = envs.SGLANG_VLM_CACHE_SIZE_MB.get()
     init_mm_embedding_cache(embedding_cache_size * 1024 * 1024)
 
+    if draft_runner is not None and draft_swa_window is not None:
+        # Scheduler accounting describes both physical pools, even when only
+        # the draft has a window. Otherwise the composite's minimum capacity is
+        # mistaken for the full target pool and valid cached prefixes trip the
+        # idle invariant. Keep the target's model geometry above unchanged.
+        is_hybrid_swa = True
+        full_tokens_per_layer = token_to_kv_pool_allocator.size_full
+        swa_tokens_per_layer = token_to_kv_pool_allocator.size_swa
+
     return KVCacheBuildResult(
         is_hybrid_swa=is_hybrid_swa,
         is_hybrid_ssm=is_hybrid_ssm,
