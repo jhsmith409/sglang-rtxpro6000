@@ -284,7 +284,7 @@ launch_args=(serve \
   --served-model-name pennyroyal \
   --host 0.0.0.0 --port 8001 --tp "$TP_SIZE" \
   --dtype "$COMPUTE_DTYPE" --quantization modelopt_fp4 --kv-cache-dtype "$KV_DTYPE" \
-  --mem-fraction-static 0.97 \
+  --mem-fraction-static 0.95 \
   "${TOKEN_CAP_ARGS[@]}" \
   --context-length "$CONTEXT_LENGTH" --json-model-override-args "$TARGET_OVERRIDES" \
   --page-size "$PAGE_SIZE" --max-running-requests "$MAX_RUNNING_REQUESTS" --sleep-on-idle \

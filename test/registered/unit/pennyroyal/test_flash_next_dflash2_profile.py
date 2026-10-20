@@ -3,7 +3,7 @@
 The profile has to resolve the intended model and settings (DFLASH against the
 accepted NVFP4 Flash-Next target, the draft unquantized, the target's Triton
 verify path, the C6/36 capacity pair, 524K context, 32 GB HiCache and the NIXL
-tier, automatic KV sizing inside the 0.97 static fraction, and the full target
+tier, automatic KV sizing inside the 0.95 static fraction, and the full target
 vocabulary rather than the FR-Spec map or the adaptive policy), and its cache
 identity has to name the draft as well as the target.
 
@@ -69,7 +69,7 @@ def test_recipe_resolves_the_intended_flash_next_dflash_launch(tmp_path):
     for flag, expected in (
         ("--quantization", "modelopt_fp4"),
         ("--kv-cache-dtype", "fp8_e4m3"),
-        ("--mem-fraction-static", "0.97"),
+        ("--mem-fraction-static", "0.95"),
         ("--context-length", "524288"),
         ("--page-size", "64"),
         ("--max-running-requests", "6"),
