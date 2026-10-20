@@ -17,6 +17,7 @@ and skipped unless a CUDA device is present.
 
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
@@ -30,6 +31,8 @@ from sglang.srt.mem_cache.unified_cache.cache_action import (
     RebuildFullToSWAMapping,
 )
 from sglang.srt.mem_cache.unified_cache.components.swa_component import SWAComponent
+from sglang.srt.speculative.base_spec_worker import BaseSpecWorker, HiCacheDraftMode
+from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
@@ -100,6 +103,24 @@ def _component(composite, window=WINDOW, page_size=PAGE):
 
 
 class TestWindowedDraftPool(CustomTestCase):
+    def test_hicache_plan_leaves_windowed_draft_to_swa_component(self):
+        _, draft_pool, _, _ = _build()
+        target_runner = SimpleNamespace(spec_algorithm=SpeculativeAlgorithm.DFLASH)
+        worker = SimpleNamespace(
+            target_worker=SimpleNamespace(model_runner=target_runner),
+            _draft_model_runners=lambda: (
+                SimpleNamespace(token_to_kv_pool=draft_pool),
+            ),
+        )
+        with patch(
+            "sglang.srt.speculative.base_spec_worker.get_memory",
+            return_value=SimpleNamespace(enable_hierarchical_cache=True),
+        ):
+            plan = BaseSpecWorker._build_hicache_draft_plan(worker)
+        self.assertEqual(plan.mode, HiCacheDraftMode.NONE)
+        self.assertEqual(plan.device_pools, ())
+        self.assertEqual(target_runner.mtp_draft_device_pools, ())
+
     def test_target_pool_identity_survives_the_draft_binding(self):
         """The composite answers for the TARGET's pool, not the draft's."""
         target_pool, draft_pool, _, composite = _build()
