@@ -114,6 +114,36 @@ def _project_candidate_logits(
     return logits
 
 
+class _HotCandidateHead:
+    """FR-Spec reduced candidate head: selected rows of the target lm_head.
+
+    The rows come from the target's own resident Parameter through the shared
+    hot-vocabulary selection, so a rowwise-FP8 head keeps its per-row scales
+    attached to its values and the target head itself is never mutated or
+    truncated. ``token_ids[position]`` is the ORIGINAL global id of each shortlist
+    row, so the selector codebooks and the verify scatter keep seeing the full
+    target vocabulary while the projection width drops to the hot set.
+    """
+
+    def __init__(self, weight: torch.Tensor, token_ids: torch.Tensor) -> None:
+        self.weight = weight
+        self.token_ids = token_ids
+        self.use_rowwise_fp8_head = is_rowwise_fp8_head_weight(weight)
+        self.width = int(weight.shape[0])
+
+
+def _project_hot_logits(
+    hidden: torch.Tensor, weight: torch.Tensor, *, use_rowwise_fp8_head: bool
+) -> torch.Tensor:
+    """Project draft hiddens through the reduced head: every row is a hot row, so
+    there is no org-vocab tail to slice or mask (unlike the full-width head)."""
+    if use_rowwise_fp8_head:
+        # The target's own kernel on the selected rows, so the per-row scales
+        # that travelled with them keep their meaning. No dequantized copy.
+        return rowwise_fp8_lm_head_logits(hidden, weight).contiguous()
+    return torch.matmul(hidden.to(weight.dtype), weight.T)
+
+
 def _get_dflash_attention_type(config, *, default: AttentionType) -> AttentionType:
     """Honor explicit causality while preserving legacy layer defaults."""
     text_config = config.get_text_config()
@@ -1095,6 +1125,10 @@ class DFlash2DraftModel(DFlashDraftModel):
         # The draft has no head of its own; the worker points this at the target's
         # before capture.
         self.lm_head: Optional[nn.Module] = None
+        # FR-Spec reduced candidate head, installed once by the worker before
+        # capture when --speculative-token-map is set. None keeps the full-width
+        # projection below, i.e. the existing no-map behavior.
+        self.candidate_head: Optional[_HotCandidateHead] = None
 
     def _transform_unary_logits(self, logits: torch.Tensor) -> torch.Tensor:
         logits = logits.float()
@@ -1114,6 +1148,23 @@ class DFlash2DraftModel(DFlashDraftModel):
         identical candidates at O(tp*K) instead of O(vocab) gather bandwidth."""
         assert self.lm_head is not None, "draft_model.lm_head unset before capture"
         k = self.candidate_selector.top_k
+        head = self.candidate_head
+        if head is not None:
+            # Reduced FR-Spec projection: top-k over the hot rows, then the
+            # shortlist positions become global ids before the selector codebook
+            # lookup, so scores, sampled path and the q handed to verify are
+            # unchanged in meaning -- only the projection width shrank.
+            vals, pos = _radix_topk(
+                _project_hot_logits(
+                    hidden,
+                    head.weight,
+                    use_rowwise_fp8_head=head.use_rowwise_fp8_head,
+                ),
+                k,
+            )
+            idx = pos.long().reshape(-1)
+            ids = head.token_ids.index_select(0, idx).view(pos.shape)
+            return ids.long(), self._transform_unary_logits(vals)
         # The worker screens the head before capture, but its eager fallback
         # (_propose_selector_block) attaches whatever the target has.
         weight = getattr(self.lm_head, "weight", None)
@@ -1159,6 +1210,73 @@ class DFlash2DraftModel(DFlashDraftModel):
         return torch.gather(gathered_ids, -1, sel).long(), self._transform_unary_logits(
             top_vals
         )
+
+    def install_hot_candidate_head(
+        self, target_lm_head: nn.Module, hot_token_id: torch.Tensor
+    ) -> int:
+        """Build the reduced candidate head from ``--speculative-token-map`` and
+        install it once (before capture, so eager and captured paths share it).
+
+        ``hot_token_id`` holds global token ids; the shared hot-vocabulary helper
+        turns them into this rank's local head rows -- failing closed when an id
+        is not a resident row -- and selects data plus rowwise scales together.
+        Only the two qualified target-head representations are accepted: an
+        ordinary dense head or Flash-Next's resident rowwise-FP8 head. Anything
+        else raises instead of guessing a selection the head cannot answer.
+        """
+        if self.candidate_head is not None:
+            return self.candidate_head.width
+        top_k = int(self.candidate_selector.top_k)
+        if hot_token_id.ndim != 1:
+            raise ValueError(
+                "DFlash2 --speculative-token-map must be a one-dimensional list of "
+                f"global token ids; got shape={tuple(hot_token_id.shape)}."
+            )
+        if hot_token_id.is_floating_point():
+            raise ValueError(
+                "DFlash2 --speculative-token-map must hold integer token ids; got "
+                f"dtype={hot_token_id.dtype}."
+            )
+        num_hot = int(hot_token_id.shape[0])
+        num_unique = int(torch.unique(hot_token_id).shape[0])
+        if num_unique != num_hot:
+            raise ValueError(
+                "DFlash2 --speculative-token-map must not repeat token ids: "
+                f"{num_hot} ids with {num_hot - num_unique} duplicates. Repeated ids "
+                "collapse the shortlist, so the q mass scattered into the target "
+                "vocabulary at acceptance would fall short of 1 per row."
+            )
+        if num_hot < top_k:
+            raise ValueError(
+                "DFlash2 --speculative-token-map must be at least as wide as the "
+                f"selector top_k: {num_hot} hot ids < top_k={top_k}."
+            )
+        quant_method = getattr(target_lm_head, "quant_method", None)
+        weight = getattr(target_lm_head, "weight", None)
+        if should_apply_lm_head_quant_method(target_lm_head, quant_method):
+            raise RuntimeError(
+                "DFlash2 --speculative-token-map needs a dense or rowwise-FP8 "
+                "target lm_head to select hot-vocabulary rows; this head carries "
+                f"an applicable quant_method ({type(quant_method).__name__}), "
+                "which has no selected-row support yet."
+            )
+        if not (is_rowwise_fp8_head_weight(weight) or is_dense_head_weight(weight)):
+            raise RuntimeError(
+                "DFlash2 --speculative-token-map needs a dense or rowwise-FP8 "
+                "target lm_head to select hot-vocabulary rows; got weight "
+                f"{None if weight is None else weight.dtype}."
+            )
+        from sglang.srt.speculative.hot_vocab import shared_hot_lm_head
+
+        hot_token_id = hot_token_id.to(weight.device)
+        selection = shared_hot_lm_head(
+            weight,
+            hot_token_id=hot_token_id,
+            target_lm_head=target_lm_head,
+            logger=logger,
+        )
+        self.candidate_head = _HotCandidateHead(selection.head, hot_token_id)
+        return self.candidate_head.width
 
 
 class MuseGlimmerAssistantModel(DFlashDraftModel):

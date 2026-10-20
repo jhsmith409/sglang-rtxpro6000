@@ -85,6 +85,7 @@ def test_selector_rejects_a_quantized_target_lm_head():
     absent weight would be read as if it were dense."""
     model = SimpleNamespace(
         lm_head=SimpleNamespace(weight=torch.empty(8, 4, dtype=torch.int8)),
+        candidate_head=None,
         candidate_selector=SimpleNamespace(top_k=4),
     )
     with pytest.raises(RuntimeError, match="requires a dense"):
@@ -142,6 +143,7 @@ def test_selector_projects_a_quantized_target_lm_head_through_its_quant_method(
     )
     model = SimpleNamespace(
         lm_head=lm_head,
+        candidate_head=None,
         candidate_selector=SimpleNamespace(top_k=4),
         _transform_unary_logits=lambda logits: logits.float(),
     )
@@ -185,6 +187,7 @@ def test_selector_gathers_global_candidates_across_vocab_shards(monkeypatch):
     )
     model = SimpleNamespace(
         lm_head=lm_head,
+        candidate_head=None,
         candidate_selector=SimpleNamespace(top_k=k),
         _transform_unary_logits=lambda logits: logits.float(),
     )
@@ -304,6 +307,7 @@ def test_selector_projects_the_scaled_rowwise_fp8_target_head(monkeypatch):
     assert scale_before is not None
     model = SimpleNamespace(
         lm_head=head,
+        candidate_head=None,
         candidate_selector=SimpleNamespace(top_k=4),
         _transform_unary_logits=lambda logits: logits.float(),
     )
@@ -341,6 +345,7 @@ def test_selector_gathers_global_candidates_across_rowwise_fp8_shards(monkeypatc
     )
     model = SimpleNamespace(
         lm_head=rank1_head,
+        candidate_head=None,
         candidate_selector=SimpleNamespace(top_k=k),
         _transform_unary_logits=lambda logits: logits.float(),
     )
@@ -399,6 +404,7 @@ def test_selector_keeps_the_dense_head_on_the_plain_matmul(monkeypatch):
         lm_head=SimpleNamespace(
             weight=weight, org_vocab_size=6, quant_method=UnquantizedLinearMethod()
         ),
+        candidate_head=None,
         candidate_selector=SimpleNamespace(top_k=3),
         _transform_unary_logits=lambda logits: logits.float(),
     )
@@ -439,15 +445,25 @@ def test_worker_folds_a_gate_admitted_quantized_selector_head(monkeypatch):
         weight=torch.empty(8, 2, dtype=torch.int8),
         quant_method=_FakeQuantMethod(torch.randn(6, 4), num_padded=2),
     )
+    monkeypatch.setattr(
+        worker_mod,
+        "get_spec",
+        lambda: SimpleNamespace(speculative_token_map=None),
+    )
     worker = SimpleNamespace(
         block_size=8,
         selector=object(),
         ps=SimpleNamespace(tp_rank=0),
-        draft_model=SimpleNamespace(lm_head=None),
+        draft_model=SimpleNamespace(lm_head=None, candidate_head=None),
         device="cpu",
         _target_worker=SimpleNamespace(
             model_runner=SimpleNamespace(model=SimpleNamespace(lm_head=quant_head))
         ),
+    )
+    # The composite installs the candidate head through this bound method (a real
+    # DFlash2DraftModel always exposes candidate_head; a bare shim must say so).
+    worker._install_selector_head = (
+        lambda head: worker_mod.DFlashWorkerV2._install_selector_head(worker, head)
     )
 
     sampler = worker_mod.DFlashWorkerV2._maybe_build_draft_sampler(worker)
@@ -488,15 +504,23 @@ def test_worker_folds_the_scaled_rowwise_fp8_selector_head(monkeypatch):
     head = _rowwise_fp8_head(
         _dominant_pad(torch.randn(8, 4, dtype=torch.bfloat16), org_rows=6)
     )
+    monkeypatch.setattr(
+        worker_mod,
+        "get_spec",
+        lambda: SimpleNamespace(speculative_token_map=None),
+    )
     worker = SimpleNamespace(
         block_size=8,
         selector=object(),
         ps=SimpleNamespace(tp_rank=0),
-        draft_model=SimpleNamespace(lm_head=None),
+        draft_model=SimpleNamespace(lm_head=None, candidate_head=None),
         device="cpu",
         _target_worker=SimpleNamespace(
             model_runner=SimpleNamespace(model=SimpleNamespace(lm_head=head))
         ),
+    )
+    worker._install_selector_head = (
+        lambda head_: worker_mod.DFlashWorkerV2._install_selector_head(worker, head_)
     )
 
     sampler = worker_mod.DFlashWorkerV2._maybe_build_draft_sampler(worker)
