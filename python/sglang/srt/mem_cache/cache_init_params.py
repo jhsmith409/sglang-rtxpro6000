@@ -55,3 +55,9 @@ class CacheInitParams:
     )
 
     mtp_draft_device_pools: tuple[object, ...] = ()
+    # A windowed DFLASH draft's bounded KV sub-pool, and the window it is sized
+    # by. The tree's existing SWA component governs these slots (retention,
+    # out-of-window reclamation, HiCache mapping rebuild) even when the target
+    # itself has no sliding-window layers.
+    draft_swa_device_pool: object = None
+    draft_swa_window: Optional[int] = None

@@ -208,6 +208,82 @@ def build_pool_entry(
     )
 
 
+def draft_swa_host_size(*, swa_kv_pool: Any, peer_pools: tuple) -> Optional[float]:
+    """The draft window's share of the configured HiCache budget, in GB.
+
+    Sized by the same proportional split every other component of the stack uses,
+    and it has to be computed explicitly for two reasons: `build_kv_host_pool`
+    reads a missing host_size as the WHOLE configured --hicache-size, and the
+    target stack divides and spends that whole budget among its own pools, so a
+    share handed to the draft on top would grow total host cache past the
+    operator's setting. Callers therefore pass the remainder to the stack builders
+    as ``host_budget_gb``. None (no --hicache-size, i.e. ratio mode) leaves
+    everything on the existing hicache_ratio path.
+    """
+    if get_memory().hicache_size <= 0:
+        return None
+    *_, swa_host_size = _split_hicache_size(
+        get_memory().hicache_size, (*peer_pools, swa_kv_pool)
+    )
+    return swa_host_size
+
+
+def draft_swa_tier(*, params: CacheInitParams, peer_pools: tuple) -> tuple:
+    """(entry-or-None, host budget left for the target's own pools, in GB).
+
+    One split across the real peer pools and the draft's windowed sub-pool, so the
+    assembled group still adds up to --hicache-size instead of exceeding it.
+    """
+    if params.draft_swa_device_pool is None:
+        return None, None
+    share = draft_swa_host_size(
+        swa_kv_pool=params.draft_swa_device_pool, peer_pools=tuple(peer_pools)
+    )
+    if share is None:
+        return None, None
+    return share, get_memory().hicache_size - share
+
+
+def build_draft_swa_entry(
+    *,
+    params: CacheInitParams,
+    page_size: int,
+    server_args: ServerArgs,
+    host_size: Optional[float],
+    host_swa_evict_fn: Optional[Callable[[int], Any]] = None,
+    device_swa_evict_fn: Optional[Callable[[int], Any]] = None,
+):
+    """HiCache entry for a windowed DFLASH draft's bounded KV sub-pool.
+
+    The draft's windowed slots are a sliding-window store even when the target
+    has no sliding-window layers, so they ride the SWA entry the hybrid-SWA
+    stacks already build: its own host tier, `PoolHitPolicy.TRAILING_PAGES`
+    semantics from the component side, and device slots allocated/freed by the
+    windowed allocator that borrowed the target's full allocator.
+    """
+    swa_kv_pool = params.draft_swa_device_pool
+    swa_attn_allocator = params.token_to_kv_pool_allocator.swa_attn_allocator
+    swa_host_pool = build_kv_host_pool(
+        kv_pool=swa_kv_pool,
+        page_size=page_size,
+        server_args=server_args,
+        use_mla=False,
+        host_size=host_size,
+        pool_label="draft_swa",
+    )
+    return build_pool_entry(
+        name=PoolName.SWA,
+        host_pool=swa_host_pool,
+        device_pool=swa_kv_pool,
+        layer_mapping={i: i for i in range(swa_kv_pool.layer_num)},
+        transfer_layer_num=swa_host_pool.layer_num,
+        host_evict_fn=host_swa_evict_fn,
+        device_evict_fn=device_swa_evict_fn,
+        device_alloc_fn=swa_attn_allocator.alloc,
+        device_free_fn=swa_attn_allocator.free,
+    )
+
+
 def build_kv_only_group(
     *,
     page_size: int,
@@ -334,6 +410,7 @@ def build_kv_only_stack(
     storage_backend: Optional[str],
     use_mla: bool,
     override_kv_cache_dim: Optional[int] = None,
+    host_budget_gb: Optional[float] = None,
     prefetch_threshold: int = 256,
     model_name: Optional[str] = None,
     storage_backend_extra_config: Optional[dict] = None,
@@ -347,6 +424,9 @@ def build_kv_only_stack(
         full_layer_mapping=full_layer_mapping,
         use_mla=use_mla,
         override_kv_cache_dim=override_kv_cache_dim,
+        # A windowed DFLASH draft tier has already taken its share of the
+        # configured --hicache-size; the target's own host pool gets the rest.
+        host_size=host_budget_gb,
         mtp_draft_device_pools=params.mtp_draft_device_pools,
     )
     cache_controller = HybridCacheController(
@@ -730,6 +810,7 @@ def build_hybrid_mamba_stack(
     server_args: ServerArgs,
     kv_pool: Any,
     mamba_pool: Any,
+    host_budget_gb: Optional[float] = None,
     qsa_pool: Any = None,
     full_layer_mapping: dict[int, int],
     mamba_layer_mapping: dict[int, int],
@@ -753,11 +834,14 @@ def build_hybrid_mamba_stack(
         for pool in params.mtp_draft_device_pools
         if hasattr(pool, "qsa_compressed_k_buffer_pool")
     )
+    hicache_gb = (
+        get_memory().hicache_size if host_budget_gb is None else host_budget_gb
+    )
     kv_host_size, mamba_host_size = None, 0
-    if get_memory().hicache_size > 0:
+    if hicache_gb > 0:
         if qsa_pool is None:
             kv_host_size, mamba_host_size = _split_hicache_size(
-                get_memory().hicache_size, (kv_pool, mamba_pool)
+                hicache_gb, (kv_pool, mamba_pool)
             )
             biased = _bias_mamba_host_size(mamba_host_size)
             kv_host_size = max(0.0, kv_host_size - (biased - mamba_host_size))
@@ -775,10 +859,10 @@ def build_hybrid_mamba_stack(
             mamba_device_bytes = mamba_pool.get_kv_size_bytes()
             total_device_bytes = kv_device_bytes + qsa_device_bytes + mamba_device_bytes
             mamba_host_size = (
-                get_memory().hicache_size * mamba_device_bytes / total_device_bytes
+                hicache_gb * mamba_device_bytes / total_device_bytes
             )
             mamba_host_size = _bias_mamba_host_size(mamba_host_size)
-            kv_qsa_budget = get_memory().hicache_size - mamba_host_size
+            kv_qsa_budget = hicache_gb - mamba_host_size
             kv_bytes_per_token = (
                 kv_pool.head_dim
                 * kv_pool.head_num
@@ -1375,10 +1459,14 @@ class _MambaStrategy(StackStrategy):
     def matches(self, kvcache, components):
         from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool
 
-        return isinstance(kvcache, HybridLinearKVPool) and components == {
-            ComponentType.FULL,
-            ComponentType.MAMBA,
-        }
+        if not isinstance(kvcache, HybridLinearKVPool):
+            return False
+        # The third component is the windowed DFLASH draft pool (see
+        # build_draft_swa_entry); the target itself has no sliding-window layers.
+        return components in (
+            {ComponentType.FULL, ComponentType.MAMBA},
+            {ComponentType.FULL, ComponentType.MAMBA, ComponentType.SWA},
+        )
 
     def build(
         self,
@@ -1396,6 +1484,10 @@ class _MambaStrategy(StackStrategy):
     ):
         full_layer_mapping = dict(kvcache.full_attention_layer_id_mapping)
         mamba_layer_mapping = dict(params.req_to_token_pool.mamba_map)
+        draft_share, peer_budget_gb = draft_swa_tier(
+            params=params,
+            peer_pools=(kvcache.full_kv_pool, params.req_to_token_pool.mamba_pool),
+        )
         host_pool_group, cache_controller = build_hybrid_mamba_stack(
             params=params,
             server_args=server_args,
@@ -1409,6 +1501,7 @@ class _MambaStrategy(StackStrategy):
             load_cache_event=load_cache_event,
             storage_backend=storage_backend,
             use_mla=kvcache.use_mla,
+            host_budget_gb=peer_budget_gb,
             host_mamba_evict_fn=lambda n: cache.evict_host(n, ComponentType.MAMBA),
             device_mamba_evict_fn=lambda n: _evict_mamba_for_device_alloc(cache, n),
             prefetch_threshold=prefetch_threshold,
@@ -1425,13 +1518,32 @@ class _MambaStrategy(StackStrategy):
                     hit_policy=PoolHitPolicy.ALL_PAGES,
                 )
             )
+        component_host_pools = {
+            ComponentType.FULL: host_pool_group.get_pool(PoolName.KV),
+            ComponentType.MAMBA: host_pool_group.get_pool(PoolName.MAMBA),
+        }
+        if params.draft_swa_device_pool is not None:
+            # Through the controller, not HostPoolGroup.add_entry: the controller
+            # owns the per-pool host-release queue and the storage-backend
+            # registration that a later-added entry otherwise misses -- which is
+            # exactly the NIXL tier this profile runs on.
+            cache_controller.register_host_pool_entry(
+                build_draft_swa_entry(
+                    params=params,
+                    page_size=params.page_size,
+                    server_args=server_args,
+                    host_size=draft_share,
+                    host_swa_evict_fn=lambda n: cache.evict_host(n, ComponentType.SWA),
+                    device_swa_evict_fn=lambda n: _evict_swa_for_device_alloc(cache, n),
+                )
+            )
+            component_host_pools[ComponentType.SWA] = host_pool_group.get_pool(
+                PoolName.SWA
+            )
         return StackBuildResult(
             host_pool_group=host_pool_group,
             cache_controller=cache_controller,
-            component_host_pools={
-                ComponentType.FULL: host_pool_group.get_pool(PoolName.KV),
-                ComponentType.MAMBA: host_pool_group.get_pool(PoolName.MAMBA),
-            },
+            component_host_pools=component_host_pools,
             register_req_to_token_counter=True,
             sidecars=sidecars,
             transfer_layer_num=len(full_layer_mapping | mamba_layer_mapping),
@@ -1720,7 +1832,12 @@ class _PlainKvStrategy(StackStrategy):
             ),
         ):
             return False
-        return components == {ComponentType.FULL}
+        # The second set carries a windowed DFLASH draft sub-pool (its SWA entry
+        # is added below); the target itself has no sliding-window layers.
+        return components in (
+            {ComponentType.FULL},
+            {ComponentType.FULL, ComponentType.SWA},
+        )
 
     def build(
         self,
@@ -1741,6 +1858,9 @@ class _PlainKvStrategy(StackStrategy):
         full_kv_pool = kvcache
         use_mla = isinstance(kvcache, MLATokenToKVPool)
         full_layer_mapping = {i: i for i in range(full_kv_pool.layer_num)}
+        draft_share, peer_budget_gb = draft_swa_tier(
+            params=params, peer_pools=(full_kv_pool,)
+        )
         host_pool_group, cache_controller = build_kv_only_stack(
             params=params,
             server_args=server_args,
@@ -1749,19 +1869,37 @@ class _PlainKvStrategy(StackStrategy):
             load_cache_event=load_cache_event,
             storage_backend=storage_backend,
             use_mla=use_mla,
+            host_budget_gb=peer_budget_gb,
             prefetch_threshold=prefetch_threshold,
             model_name=model_name,
             storage_backend_extra_config=storage_backend_extra_config,
             enable_storage_metrics=enable_storage_metrics,
         )
+        component_host_pools = {
+            ComponentType.FULL: host_pool_group.get_pool(PoolName.KV),
+        }
+        if params.draft_swa_device_pool is not None:
+            cache_controller.register_host_pool_entry(
+                build_draft_swa_entry(
+                    params=params,
+                    page_size=params.page_size,
+                    server_args=server_args,
+                    host_size=draft_share,
+                    host_swa_evict_fn=lambda n: cache.evict_host(n, ComponentType.SWA),
+                    device_swa_evict_fn=lambda n: _evict_swa_for_device_alloc(cache, n),
+                )
+            )
+            component_host_pools[ComponentType.SWA] = host_pool_group.get_pool(
+                PoolName.SWA
+            )
         return StackBuildResult(
             host_pool_group=host_pool_group,
             cache_controller=cache_controller,
-            component_host_pools={
-                ComponentType.FULL: host_pool_group.get_pool(PoolName.KV),
-            },
+            component_host_pools=component_host_pools,
             transfer_layer_num=len(full_layer_mapping),
-            pools_desc="KV",
+            pools_desc="KV + draft SWA"
+            if params.draft_swa_device_pool is not None
+            else "KV",
         )
 
 

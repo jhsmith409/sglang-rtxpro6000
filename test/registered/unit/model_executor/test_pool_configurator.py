@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from sglang.srt.configs.model_config import AttentionArch
+from sglang.srt.utils.common import ceil_align
 from sglang.srt.distributed.parallel_state_wrapper import ParallelState
 from sglang.srt.runtime_context import get_memory, get_parallel, get_server_args
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -75,6 +76,7 @@ def _make_model_runner(
     speculative_algorithm=None,
     speculative_num_steps=None,
     speculative_eagle_topk=None,
+    speculative_draft_window_size=None,
     disaggregation_mode="null",
     max_running_requests=None,
     disaggregation_decode_extra_slots=0,
@@ -120,6 +122,11 @@ def _make_model_runner(
     mc.get_swa_num_kv_heads = lambda tp_size: swa_num_kv_heads or num_kv_heads
     mc.hf_config = SimpleNamespace(architectures=["LlamaForCausalLM"])
     mc.hf_config.get_text_config = lambda: mc.hf_config
+    # The cell-size hooks read the text config (QSA profile lookup) and the
+    # windowed-draft bound checks whether post-capture KV sizing reserved the
+    # pool already; neither is a GPU concern, so the double carries them.
+    mc.hf_text_config = mc.hf_config
+    mr.post_capture_kv_active = False
     mc.linear_attn_registry_result = None
     mc.context_len = 8192
     mr.model_config = mc
@@ -140,6 +147,7 @@ def _make_model_runner(
         speculative_algorithm=speculative_algorithm,
         speculative_num_steps=speculative_num_steps,
         speculative_eagle_topk=speculative_eagle_topk,
+        speculative_draft_window_size=speculative_draft_window_size,
         disaggregation_mode=disaggregation_mode,
         max_running_requests=max_running_requests,
         disaggregation_decode_extra_slots=disaggregation_decode_extra_slots,
@@ -999,6 +1007,256 @@ class TestDflashDraftKvBudget(CustomTestCase):
             return config.full_max_total_num_tokens
 
         self.assertLess(_tokens(10240), _tokens(None))
+
+
+class TestDflashDraftWindowBudget(CustomTestCase):
+    """The windowed DFLASH draft pool's bound, and what it is charged today.
+
+    ``--speculative-draft-window-size`` windows the draft's *index* view only:
+    the draft KV pool is indexed by the target's cache locations 1:1, so it
+    inherits ``max_total_num_tokens`` and is priced per target token. These
+    cases pin the bound the window implies (which the hybrid-SWA pools already
+    compute with the same ``windowed_token_cap`` formula), independently of the
+    target's token capacity, and pin that native NEXTN / unwindowed drafts have
+    no such bound to regress.
+    """
+
+    # The next-dflash2 / 27b-dflash2 launch geometry.
+    DRAFT_CELL = 8 * (128 + 128) * 5 * 1  # 8 kv heads, FP8 KV, 5 draft layers
+
+    def _dflash_runner(
+        self, *, draft_tokens=8, hybrid_swa=False, reqs=6, **kwargs
+    ):
+        """A DFLASH target double on the shipped profile geometry.
+
+        ``hybrid_swa`` gives the target sliding-window layers so
+        ``SWAChunkCapPoolConfigurator`` (the engine's other independently
+        bounded windowed pool) can be built for the same geometry and the two
+        caps compared.
+        """
+        mr = _make_model_runner(
+            self,
+            num_layers=48,
+            page_size=64,
+            chunked_prefill_size=kwargs.pop("chunked_prefill_size", 4096),
+            max_running_requests=reqs,
+            sliding_window_size=kwargs.pop("sliding_window_size", 2048),
+            speculative_algorithm="DFLASH",
+            speculative_num_draft_tokens=draft_tokens,
+            speculative_num_steps=1,
+            speculative_eagle_topk=1,
+            speculative_draft_window_size=kwargs.pop("draft_window", 2048),
+            is_hybrid_swa=hybrid_swa,
+            full_attention_layer_ids=list(range(24)) if hybrid_swa else None,
+            swa_attention_layer_ids=list(range(24, 48)) if hybrid_swa else None,
+            swa_num_kv_heads=4,
+            disable_radix_cache=kwargs.pop("disable_radix_cache", False),
+            **kwargs,
+        )
+        mr.spec_algorithm.is_none.return_value = False
+        mr.spec_algorithm.is_dflash_family.return_value = True
+        mr.spec_aux_config = SimpleNamespace(
+            eagle_draft_num_layers=None,
+            dflash_draft_num_layers=5,
+            dflash_draft_cell_size_per_token=self.DRAFT_CELL,
+        )
+        return mr
+
+    def _budget(self, mr, **env):
+        from sglang.srt.model_executor.pool_configurator import (
+            dflash_draft_window_pool,
+        )
+
+        with mock_cpu_env(kv_size=1, **env):
+            return dflash_draft_window_pool(mr)
+
+    def test_bound_matches_the_hybrid_swa_window_cap(self):
+        """One formula: the draft's bound equals the SWA pool cap the engine computes."""
+        mr = self._dflash_runner(hybrid_swa=True)
+        with mock_cpu_env(kv_size=1, swa_eviction_interval=128):
+            from sglang.srt.model_executor.pool_configurator import (
+                create_memory_pool_configurator,
+                dflash_draft_window_pool,
+            )
+
+            from sglang.srt.model_executor.pool_configurator import (
+                SWAChunkCapPoolConfigurator,
+            )
+
+            cfg = SWAChunkCapPoolConfigurator(mr)
+            budget = dflash_draft_window_pool(mr)
+        # The bound is the same cap the hybrid-SWA windowed pool is sized from,
+        # page-rounded the same way that configurator rounds it before allocating.
+        self.assertEqual(budget.tokens, ceil_align(cfg._swa_cap, 64))
+
+    def test_bound_is_fixed_for_the_launch_geometry(self):
+        """window + interval*draft + page + 2*alloc, per request, plus prefill."""
+        mr = self._dflash_runner()
+        budget = self._budget(mr, swa_eviction_interval=128)
+        # per request: 2048 + 128*8 + 64 + 2*8 = 3152; 6 requests = 18912.
+        # in flight: 2 chunks of 4096 + one 64-token page = 8256.
+        # per request 3152 * 6 + 8256 = 27168, rounded up to the page-64 pool.
+        self.assertEqual(budget.tokens, 27200)
+        self.assertEqual(budget.bytes, budget.tokens * self.DRAFT_CELL)
+
+    def test_bound_does_not_follow_target_token_capacity(self):
+        """Target capacity moves with the memory budget; the draft bound does not."""
+        mr = self._dflash_runner(hybrid_swa=True)
+        with mock_cpu_env(kv_size=1, swa_eviction_interval=128):
+            from sglang.srt.model_executor.pool_configurator import (
+                create_memory_pool_configurator,
+                dflash_draft_window_pool,
+            )
+
+            from sglang.srt.model_executor.pool_configurator import (
+                SWAChunkCapPoolConfigurator,
+            )
+
+            cfg = SWAChunkCapPoolConfigurator(mr)
+            small = cfg.calculate_pool_sizes(40 << 30, 64)
+            large = cfg.calculate_pool_sizes(80 << 30, 64)
+            budget = dflash_draft_window_pool(mr)
+        self.assertGreater(
+            large.full_max_total_num_tokens, small.full_max_total_num_tokens
+        )
+        self.assertEqual(budget.tokens, ceil_align(cfg._swa_cap, 64))
+
+    def test_bound_is_not_an_active_window_only_budget(self):
+        """Prefill chunks and the verify block are inside the bound, not the window."""
+        mr = self._dflash_runner()
+        budget = self._budget(mr, swa_eviction_interval=128)
+        self.assertGreater(budget.tokens, 6 * 2048)
+
+    def test_bound_tracks_block_width_and_scheduling(self):
+        """Wider verify blocks and sync scheduling change the bound, as they should."""
+        wide = self._budget(
+            self._dflash_runner(draft_tokens=4), swa_eviction_interval=128
+        )
+        plain = self._budget(self._dflash_runner(), swa_eviction_interval=128)
+        self.assertLess(wide.tokens, plain.tokens)
+
+        sync = self._dflash_runner(disable_overlap_schedule=True)
+        with mock_cpu_env(kv_size=1, swa_eviction_interval=128):
+            from sglang.srt.model_executor.pool_configurator import (
+                dflash_draft_window_pool,
+            )
+
+            sync_budget = dflash_draft_window_pool(sync)
+        # One chunk in flight instead of two, and spec-v1's per-request decode
+        # alloc instead of the overlap double buffer.
+        self.assertLess(sync_budget.tokens, plain.tokens)  # 23,360 vs 27,200
+
+        # No radix cache: the tree is a plain ChunkCache with no SWA component to
+        # reclaim windowed slots, so the bound is not claimed either.
+        no_radix = self._budget(
+            self._dflash_runner(disable_radix_cache=True), swa_eviction_interval=128
+        )
+        self.assertIsNone(no_radix)
+
+        # No pinned prefill geometry (chunking off/-1/None): the whole prompt is
+        # reserved at once, so no bound is claimed and the old charge stands.
+        for kwargs in (
+            {"chunked_prefill_size": None},
+            {"chunked_prefill_size": -1},
+        ):
+            self.assertIsNone(
+                self._budget(
+                    self._dflash_runner(**kwargs), swa_eviction_interval=128
+                ),
+                kwargs,
+            )
+
+    def test_no_bound_without_a_draft_window_or_for_nextn(self):
+        """Unwindowed DFLASH and native NEXTN keep their existing sizing exactly."""
+        unwindowed = self._dflash_runner(draft_window=None)
+        self.assertIsNone(self._budget(unwindowed))
+
+        mr = _make_model_runner(
+            self,
+            page_size=64,
+            max_running_requests=6,
+            chunked_prefill_size=4096,
+            speculative_algorithm="EAGLE",
+            speculative_num_draft_tokens=4,
+            speculative_num_steps=1,
+            speculative_eagle_topk=1,
+            speculative_draft_window_size=2048,
+        )
+        mr.spec_algorithm.is_none.return_value = False
+        mr.spec_algorithm.is_eagle.return_value = True
+        self.assertIsNone(self._budget(mr))
+
+    def test_windowed_draft_is_a_fixed_charge_not_a_per_token_tax(self):
+        """The draft charge moves from per target token to a fixed deduction.
+
+        Same budget, same geometry; a windowed draft pays for its bounded pool
+        once instead of for every target token, so target capacity grows by
+        exactly the draft bytes it no longer reads -- and the two still account
+        for the whole budget.
+        """
+        available = 100 << 30
+        # Fixture target geometry at kv_size=1: 4 kv heads * (64+64) dims * 48
+        # layers = 512 B/layer, so 24576 B/token before any draft term.
+        target_cell = 4 * 128 * 1 * 48
+
+        def _sizes(**kwargs):
+            mr = self._dflash_runner(**kwargs)
+            with mock_cpu_env(kv_size=1, swa_eviction_interval=128):
+                from sglang.srt.model_executor.pool_configurator import (
+                    create_memory_pool_configurator,
+                )
+
+                cfg = create_memory_pool_configurator(mr)
+                return cfg, cfg.calculate_pool_sizes(available, 64)
+
+        windowed_cfg, windowed = _sizes()
+        _, unwindowed = _sizes(draft_window=None)
+        draft_bytes = windowed.draft_swa_max_total_num_tokens * self.DRAFT_CELL
+
+        self.assertIsNone(unwindowed.draft_swa_max_total_num_tokens)
+        self.assertEqual(windowed_cfg._cell_size, target_cell)
+        self.assertEqual(draft_bytes, 27200 * self.DRAFT_CELL)
+        self.assertEqual(
+            windowed.max_total_num_tokens,
+            (available - draft_bytes) // target_cell // 64 * 64,
+        )
+        self.assertGreater(
+            windowed.max_total_num_tokens, unwindowed.max_total_num_tokens
+        )
+        # No token is unaccounted for, and the draft is no longer priced per one.
+        self.assertEqual(windowed_cfg._draft_fixed_bytes, draft_bytes)
+        self.assertLessEqual(
+            windowed.max_total_num_tokens * target_cell + draft_bytes, available
+        )
+
+    def test_windowed_cap_formula_is_the_shared_one(self):
+        from sglang.srt.mem_cache.allocation_sizing import windowed_token_cap
+
+        # __________[padding][eviction_interval][window] + decode + prefill.
+        self.assertEqual(
+            windowed_token_cap(
+                sliding_window_size=8,
+                page_size=4,
+                eviction_interval=4,
+                draft_tokens=5,
+                decode_alloc=16,
+                num_reqs=2,
+                prefill_headroom=1 * 4 + 4,
+            ),
+            104,  # the cap TestHybridSWAConfigurator pins through the configurator
+        )
+        # With no in-flight prefill term: exactly the per-request windowed tail.
+        self.assertEqual(
+            windowed_token_cap(
+                sliding_window_size=8,
+                page_size=4,
+                eviction_interval=4,
+                draft_tokens=5,
+                decode_alloc=16,
+                num_reqs=2,
+            ),
+            96,
+        )
 
 
 if __name__ == "__main__":

@@ -32,7 +32,10 @@ from sglang.srt.configs.model_config import (
     is_minimax_sparse,
 )
 from sglang.srt.environ import envs
-from sglang.srt.mem_cache.allocation_sizing import get_alloc_len_per_decode
+from sglang.srt.mem_cache.allocation_sizing import (
+    get_step_alloc_per_request,
+    windowed_token_cap,
+)
 from sglang.srt.mem_cache.deepseek_v4_memory_pool import (
     get_compress_state_ring_size,
     get_compress_state_write_pad,
@@ -49,8 +52,20 @@ from sglang.srt.utils.common import (
     ceil_align,
     ceil_div,
     is_float4_e2m1fn_x2,
-    spec_decode_alloc_len_per_request,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class DflashDraftWindowPool:
+    """A windowed DFLASH draft's bounded KV pool: slots, bytes per slot, window."""
+
+    tokens: int
+    cell_size: int
+    window: int
+
+    @property
+    def bytes(self) -> int:
+        return self.tokens * self.cell_size
 
 
 @dataclass
@@ -61,6 +76,11 @@ class MemoryPoolConfig:
     max_running_requests: Optional[int] = None
     full_max_total_num_tokens: Optional[int] = None
     swa_max_total_num_tokens: Optional[int] = None
+
+    # Bounded capacity of a windowed DFLASH draft KV pool, in draft slots. The
+    # draft worker builds its pool from this instead of from max_total_num_tokens,
+    # so draft memory stops scaling with target token capacity.
+    draft_swa_max_total_num_tokens: Optional[int] = None
 
     # DSV4 compressed-attention pool sizes (target only; draft workers leave at 0).
     c4_max_total_num_tokens: int = 0
@@ -99,6 +119,88 @@ def _dflash_draft_cell_size(kvc: KVCacheConfigurator) -> int:
     if cell_size is None or int(cell_size) <= 0:
         return 0
     return int(cell_size) * get_parallel().attn_dcp_size
+
+
+def dflash_draft_window_pool(kvc: KVCacheConfigurator) -> Optional[DflashDraftWindowPool]:
+    """What a windowed DFLASH draft KV pool would cost, and what it costs today.
+
+    ``--speculative-draft-window-size`` already gives the draft a windowed
+    *index* view (``DFlashWorkerV2.use_compact_draft_cache``), so only the last
+    window of each request is ever read -- but the physical pool was not
+    windowed with it: indexed 1:1 by the target's cache locations, it inherited
+    ``max_total_num_tokens`` and was charged per target token by
+    ``_dflash_draft_cell_size``. This is the bound that pool moves to: the same
+    windowed-cap formula the hybrid-SWA pools are sized by, charged once as a
+    fixed deduction instead of a per-token tax, so the target stops paying for
+    draft KV the window can never read.
+
+    Returns None -- keeping the historical per-target-token charge -- when the
+    draft is not a windowed DFLASH draft, or when the launch has not pinned the
+    geometry the bound needs in order to be a promise rather than a projection:
+    an explicit --max-running-requests (the tail is charged per request), a
+    positive --chunked-prefill-size (an unchunked prompt is reserved whole, so
+    the pool has to be able to hold it), the prefix cache enabled (windowed slot
+    reclamation lives in the tree's SWA component), and post-capture KV sizing
+    off (that path reserves address space and resizes the pool from the full-pool
+    fields later, so a bounded draft pool charged here would be charged twice).
+    """
+    if kvc.is_draft_worker or not kvc.spec_algorithm.is_dflash_family():
+        return None
+    window = get_spec().speculative_draft_window_size
+    cell_size = _dflash_draft_cell_size(kvc)
+    num_reqs = get_schedule().max_running_requests
+    chunked_prefill_size = get_schedule().chunked_prefill_size
+    if (
+        window is None
+        or cell_size <= 0
+        or num_reqs is None
+        or chunked_prefill_size is None
+        or int(chunked_prefill_size) <= 0
+        or kvc.post_capture_kv_active
+        or get_memory().disable_radix_cache
+    ):
+        # Without the radix cache the tree is a plain ChunkCache (see
+        # registry.default_radix_cache_factory), which has no SWA component to
+        # reclaim bounded windowed slots during a long chunked prefill; the draft
+        # keeps its original full-history pool there rather than leaking slots.
+        return None
+
+    page_size = kvc.page_size
+    draft_tokens = get_spec().speculative_num_draft_tokens or 1
+    eviction_interval = max(1, envs.SGLANG_SWA_EVICTION_INTERVAL.get())
+    disable_overlap = get_schedule().disable_overlap_schedule
+    decode_alloc = get_step_alloc_per_request(
+        page_size, disable_overlap_schedule=disable_overlap
+    )
+
+    num_reqs = num_reqs // kvc.ps.attn_dp_size
+    if get_disagg().disaggregation_mode == "decode":
+        headroom = (int(window) + page_size) * (
+            get_disagg().disaggregation_decode_extra_slots or 0
+        )
+    else:
+        # A chunk that is drafted but not yet committed cannot be evicted; sync
+        # scheduling has one chunk in flight, overlap scheduling two.
+        chunks_in_flight = 1 if disable_overlap else 2
+        headroom = chunks_in_flight * int(chunked_prefill_size) + page_size
+
+    tokens = windowed_token_cap(
+        sliding_window_size=int(window),
+        page_size=page_size,
+        eviction_interval=eviction_interval,
+        draft_tokens=int(draft_tokens),
+        decode_alloc=int(decode_alloc),
+        num_reqs=int(num_reqs),
+        prefill_headroom=int(headroom),
+    )
+    # Round the capacity UP to the pool's own page (widened by context
+    # parallelism, which is also the draft pool's page) so the bytes charged and
+    # the slots allocated are the same number rounded the same way.
+    page = max(kvc.page_size * get_parallel().attn_dcp_size, 1)
+    tokens = (tokens + page - 1) // page * page
+    return DflashDraftWindowPool(
+        tokens=tokens, cell_size=cell_size, window=int(window)
+    )
 
 
 def _get_dsv4_compress_state_dtype_sizes() -> tuple[int, int]:
@@ -213,7 +315,15 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                         self._cell_size * (1 + draft_num_layers / int(num_layers))
                     )
 
-        # DFLASH/DSPARK: scale cell_size to account for draft model KV cache
+        # DFLASH/DSPARK: account for the draft model's KV cache.
+        # A windowed draft (``--speculative-draft-window-size``) reads only its
+        # window, so its pool is bounded by ``dflash_draft_window_pool`` and is
+        # deducted from the budget as a fixed amount: the per-target-token charge
+        # priced a full-history draft shadow that the window never reads, and it
+        # made draft memory grow with target capacity. Every other draft shape
+        # keeps the existing per-token coefficient.
+        self._draft_window = dflash_draft_window_pool(kvc)
+        self._draft_fixed_bytes = 0
         if kvc.spec_algorithm.is_dflash_family() and not kvc.is_draft_worker:
             from sglang.srt.speculative.dflash_utils import (
                 scale_kv_cell_size_per_token_for_dflash,
@@ -225,13 +335,22 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
                 and int(draft_num_layers) > 0
                 and int(num_layers) > 0
             ):
-                self._cell_size = scale_kv_cell_size_per_token_for_dflash(
-                    target_cell_size_per_token=self._cell_size,
-                    target_num_layers=int(num_layers),
-                    draft_num_layers=int(draft_num_layers)
-                    * get_parallel().attn_dcp_size,
-                    draft_cell_size_per_token=_dflash_draft_cell_size(kvc) or None,
-                )
+                if self._draft_window is None:
+                    self._cell_size = scale_kv_cell_size_per_token_for_dflash(
+                        target_cell_size_per_token=self._cell_size,
+                        target_num_layers=int(num_layers),
+                        draft_num_layers=int(draft_num_layers)
+                        * get_parallel().attn_dcp_size,
+                        draft_cell_size_per_token=_dflash_draft_cell_size(kvc) or None,
+                    )
+                else:
+                    self._draft_fixed_bytes = self._draft_window.bytes
+
+    def draft_pool_config(self, config: MemoryPoolConfig) -> MemoryPoolConfig:
+        """Attach the bounded windowed draft pool to a resolved config."""
+        if self._draft_window is not None:
+            config.draft_swa_max_total_num_tokens = self._draft_window.tokens
+        return config
 
     def _compute_cell_size(self, kvc: KVCacheConfigurator, num_layers: int) -> int:
         """Compute per-token KV cache cost in bytes. Subclasses can override."""
@@ -447,20 +566,26 @@ class DefaultPoolConfigurator(MemoryPoolConfigurator):
     def calculate_pool_sizes(
         self, available_bytes: int, page_size: int
     ) -> MemoryPoolConfig:
-        available_bytes = max(available_bytes, 0)
+        # The windowed draft pool is a fixed reservation, not a per-token cost,
+        # so it comes off the budget before the full pool's token count.
+        available_bytes = max(available_bytes - self._draft_fixed_bytes, 0)
         max_total_num_tokens = (
             available_bytes // self._cell_size
             if self._cell_size
             else self._zero_kv_max_tokens
         )
         max_total_num_tokens = max_total_num_tokens // page_size * page_size
-        return MemoryPoolConfig(max_total_num_tokens=max_total_num_tokens)
+        return self.draft_pool_config(
+            MemoryPoolConfig(max_total_num_tokens=max_total_num_tokens)
+        )
 
     def calculate_pool_sizes_from_max_tokens(
         self, max_total_num_tokens: int, page_size: int
     ) -> MemoryPoolConfig:
         max_total_num_tokens = max_total_num_tokens // page_size * page_size
-        return MemoryPoolConfig(max_total_num_tokens=max_total_num_tokens)
+        return self.draft_pool_config(
+            MemoryPoolConfig(max_total_num_tokens=max_total_num_tokens)
+        )
 
 
 class HybridSWAPoolConfigurator(MemoryPoolConfigurator):
@@ -682,40 +807,32 @@ class SWAChunkCapPoolConfigurator(HybridSWAPoolConfigurator):
         draft_tokens = get_spec().speculative_num_draft_tokens or 1
         eviction_interval = max(1, envs.SGLANG_SWA_EVICTION_INTERVAL.get())
 
-        """
-        __________[padding][eviction_interval][window]
-        Padding to make sure eviction point is page-aligned.
-        """
-        trailing_tokens = window + eviction_interval * draft_tokens + page_size
-        if get_spec().speculative_algorithm is None:
-            decode_alloc = page_size
-        elif get_schedule().disable_overlap_schedule:
-            # spec-v1: new_tokens_required_next_decode per request.
-            decode_alloc = spec_decode_alloc_len_per_request(
-                page_size=page_size,
-                speculative_num_steps=get_spec().speculative_num_steps,
-                speculative_eagle_topk=get_spec().speculative_eagle_topk,
-                speculative_num_draft_tokens=get_spec().speculative_num_draft_tokens,
-            )
-        else:
-            # spec-v2: the overlap allocator keeps 2 * alloc_len outstanding
-            # (eagle_utils.eagle_prepare_for_decode: kv_committed_len + 2 * alloc_len).
-            decode_alloc = 2 * get_alloc_len_per_decode()
-        per_request = trailing_tokens + decode_alloc
+        # __________[padding][eviction_interval][window]
+        # Padding to make sure the eviction point stays page-aligned, and the
+        # decode step in flight cannot have been evicted yet.
+        decode_alloc = get_step_alloc_per_request(
+            page_size, disable_overlap_schedule=get_schedule().disable_overlap_schedule
+        )
 
         num_reqs = get_schedule().max_running_requests // kvc.ps.attn_dp_size
         if get_disagg().disaggregation_mode == "decode":
-            self._swa_cap = (
-                per_request * num_reqs
-                + (window + page_size) * get_disagg().disaggregation_decode_extra_slots
-            )
+            headroom = (
+                window + page_size
+            ) * get_disagg().disaggregation_decode_extra_slots
         else:
             chunks_in_flight = 1 if get_schedule().disable_overlap_schedule else 2
-            self._swa_cap = (
-                per_request * num_reqs
-                + chunks_in_flight * get_schedule().chunked_prefill_size
-                + page_size
+            headroom = (
+                chunks_in_flight * get_schedule().chunked_prefill_size + page_size
             )
+        self._swa_cap = windowed_token_cap(
+            sliding_window_size=window,
+            page_size=page_size,
+            eviction_interval=eviction_interval,
+            draft_tokens=draft_tokens,
+            decode_alloc=decode_alloc,
+            num_reqs=num_reqs,
+            prefill_headroom=headroom,
+        )
 
     @staticmethod
     def is_applicable(kvc: KVCacheConfigurator) -> bool:

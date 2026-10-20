@@ -54,6 +54,59 @@ def get_alloc_reserve_per_decode() -> int:
     return 2 * get_alloc_len_per_decode()
 
 
+def get_step_alloc_per_request(
+    page_size: int, *, disable_overlap_schedule: bool
+) -> int:
+    """KV tokens one request may hold for a single decode step.
+
+    Without speculation, one page. Under spec-v1, the per-request decode alloc.
+    Under spec-v2, the overlap allocator keeps a double buffer outstanding
+    (kv_committed_len + 2 * alloc_len), so both steps are resident at once.
+    Shared by every windowed sub-pool's cap, which bounds its out-of-window
+    lag by exactly this much.
+    """
+    spec = get_spec()
+    if spec.speculative_algorithm is None:
+        return page_size
+    if disable_overlap_schedule:
+        from sglang.srt.utils.common import spec_decode_alloc_len_per_request
+
+        return spec_decode_alloc_len_per_request(
+            page_size=page_size,
+            speculative_num_steps=spec.speculative_num_steps,
+            speculative_eagle_topk=spec.speculative_eagle_topk,
+            speculative_num_draft_tokens=spec.speculative_num_draft_tokens,
+        )
+    return get_alloc_reserve_per_decode()
+
+
+def windowed_token_cap(
+    *,
+    sliding_window_size: int,
+    page_size: int,
+    eviction_interval: int,
+    draft_tokens: int,
+    decode_alloc: int,
+    num_reqs: int,
+    prefill_headroom: int = 0,
+) -> int:
+    """Tokens a bounded windowed KV sub-pool must hold.
+
+    ``__________[padding][eviction_interval][window]`` plus the decode step in
+    flight: one windowed tail per resident request, plus whatever the sub-pool
+    cannot have evicted yet (in-flight chunked prefill, or the slots a
+    disaggregation decode role pre-allocates). The eviction interval is charged
+    in draft tokens because that is the granularity at which the window
+    frontier moves.
+
+    Hoisted out of ``SWAChunkCapPoolConfigurator`` so every windowed sub-pool
+    (a hybrid-SWA target's SWA pool, a windowed DFLASH draft pool) is sized by
+    one formula instead of a per-architecture copy.
+    """
+    trailing_tokens = sliding_window_size + eviction_interval * draft_tokens + page_size
+    return (trailing_tokens + decode_alloc) * num_reqs + prefill_headroom
+
+
 def page_aligned_decode_alloc_lens(
     reqs,
     *,

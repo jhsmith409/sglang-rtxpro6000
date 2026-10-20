@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 
 from sglang.srt.mem_cache.allocator.base import BaseTokenToKVPoolAllocator
@@ -29,7 +31,22 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         device: str,
         kvcache: BaseSWAKVPool,
         need_sort: bool,
+        full_attn_allocator: Optional[BaseTokenToKVPoolAllocator] = None,
     ):
+        """Full/windowed hybrid allocator.
+
+        ``full_attn_allocator`` borrows an already-built full allocator instead of
+        owning one, so a windowed sub-pool can be layered onto a target whose own
+        allocation semantics must not change. That is how a windowed DFLASH draft
+        KV pool rides this class: ``kvcache`` is the windowed pool the windowed
+        side stores into, and under a borrowed full side the *target's* pool stays
+        this allocator's ``_kvcache`` -- consumers resolve the target KV pool, its
+        layers and its HiCache stack through ``get_kvcache()``, and must keep
+        seeing the target's real pool rather than the draft's -- so retraction
+        backup and the HiCache stack still copy and register target state. The
+        table is registered on the windowed pool, and the translation methods go
+        through it rather than through ``_kvcache``.
+        """
         assert isinstance(kvcache, BaseSWAKVPool)
         self._size_full = size
         self._size_swa = size_swa
@@ -37,22 +54,23 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         self.device = device
         self.page_size = page_size
 
-        full_kv_pool = getattr(kvcache, "full_kv_pool", None)
         swa_kv_pool = getattr(kvcache, "swa_kv_pool", None)
+        windowed_kv_pool = kvcache
 
-        if page_size == 1:
+        if full_attn_allocator is not None:
+            # Borrowed full side: the mapping indexes the borrowed allocator's
+            # location space, so the table is sized from that allocator, and the
+            # engine's KV pool remains the one that allocator serves.
+            self.full_attn_allocator = full_attn_allocator
+            self._size_full = full_attn_allocator.size
+            size = self._size_full
+            kvcache = full_attn_allocator.get_kvcache()
+        elif page_size == 1:
             self.full_attn_allocator = TokenToKVPoolAllocator(
                 size,
                 dtype,
                 device,
-                full_kv_pool,
-                need_sort,
-            )
-            self.swa_attn_allocator = TokenToKVPoolAllocator(
-                size_swa,
-                dtype,
-                device,
-                swa_kv_pool,
+                getattr(kvcache, "full_kv_pool", None),
                 need_sort,
             )
         else:
@@ -65,9 +83,23 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
                 page_size,
                 dtype,
                 device,
-                full_kv_pool,
+                getattr(kvcache, "full_kv_pool", None),
                 need_sort,
             )
+
+        if page_size == 1:
+            self.swa_attn_allocator = TokenToKVPoolAllocator(
+                size_swa,
+                dtype,
+                device,
+                swa_kv_pool,
+                need_sort,
+            )
+        else:
+            if _is_npu:
+                PagedTokenToKVPoolAllocatorClass = NPUPagedTokenToKVPoolAllocator
+            else:
+                PagedTokenToKVPoolAllocatorClass = PagedTokenToKVPoolAllocator
             self.swa_attn_allocator = PagedTokenToKVPoolAllocatorClass(
                 size_swa,
                 page_size,
@@ -98,8 +130,9 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         self.swa_free_group = []
 
         self._kvcache = kvcache
+        self._windowed_kv_pool = windowed_kv_pool
         self.clear()
-        self._kvcache.register_mapping(self.full_to_swa_index_mapping)
+        windowed_kv_pool.register_mapping(self.full_to_swa_index_mapping)
 
     def available_size(self):
         return min(
@@ -146,8 +179,10 @@ class SWATokenToKVPoolAllocator(BaseTokenToKVPoolAllocator):
         return self._kvcache
 
     def translate_loc_from_full_to_swa(self, kv_indices: torch.Tensor):
-        assert self._kvcache.full_to_swa_index_mapping is not None
-        return self._kvcache.translate_loc_from_full_to_swa(kv_indices)
+        # The windowed pool owns the mapping; under a borrowed full side that is
+        # the draft's pool, while _kvcache stays the target's pool for identity.
+        assert self._windowed_kv_pool.full_to_swa_index_mapping is not None
+        return self._windowed_kv_pool.translate_loc_from_full_to_swa(kv_indices)
 
     def alloc(self, need_size: int):
         assert self.page_size == 1

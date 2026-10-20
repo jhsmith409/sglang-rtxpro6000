@@ -205,6 +205,14 @@ def build_kv_cache(
             tp_worker.get_tokens_per_layer_info()
         )
 
+    # A windowed DFLASH draft pool is a bounded windowed sub-pool, so the tree's
+    # SWA component governs it with the DRAFT window. The target keeps its own
+    # attention and allocation semantics; only the draft's slots are windowed.
+    draft_runner = getattr(tp_worker.model_runner, "draft_swa_kv_pool", None)
+    draft_swa_window = getattr(tp_worker.model_runner, "draft_swa_window", None)
+    if draft_runner is not None and draft_swa_window is not None:
+        sliding_window_size = draft_swa_window
+
     req_to_token_pool, token_to_kv_pool_allocator = tp_worker.get_memory_pool()
     mtp_draft_device_pools = tp_worker.model_runner.mtp_draft_device_pools
 
@@ -293,6 +301,8 @@ def build_kv_cache(
         chunked_prefill_size=effective_chunked_prefill_size,
         sliding_window_size=sliding_window_size,
         mtp_draft_device_pools=mtp_draft_device_pools,
+        draft_swa_device_pool=draft_runner,
+        draft_swa_window=draft_swa_window,
     )
 
     tree_cache = create_tree_cache(
@@ -306,6 +316,7 @@ def build_kv_cache(
             enable_hierarchical_cache=enable_hierarchical_cache,
             disable_radix_cache=disable_radix_cache,
             effective_chunked_prefill_size=effective_chunked_prefill_size,
+            draft_swa_window=draft_swa_window if draft_runner is not None else None,
             tp_worker=tp_worker,
             model_config=model_config,
             tp_size=ps.tp_size,

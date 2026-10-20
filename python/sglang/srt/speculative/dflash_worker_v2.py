@@ -26,6 +26,7 @@ from sglang.srt.lora.layers import unwrap_lora_layer
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.managers.scheduler import GenerationBatchResult
 from sglang.srt.managers.tp_worker import TpModelWorker
+from sglang.srt.mem_cache.allocator.swa import SWATokenToKVPoolAllocator
 from sglang.srt.model_executor.cuda_graph_config import Backend
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,
@@ -457,6 +458,34 @@ class DFlashWorkerV2(BaseSpecWorker):
             ),
             token_to_kv_pool_allocator=token_to_kv_pool_allocator,
         )
+        if self.use_compact_draft_cache:
+            self._bind_windowed_draft_allocator()
+
+    def _bind_windowed_draft_allocator(self) -> None:
+        """Route the engine through the draft's windowed full/SWA allocator.
+
+        A windowed draft pool is bounded, so its slots cannot be the target's
+        locations any more. ``SWATokenToKVPoolAllocator`` already answers that
+        for hybrid-SWA models -- it hands out full locations, keeps a page
+        aligned full->window mapping, frees out-of-window slots and rebuilds the
+        mapping when a cached prefix comes back from the host/storage tier --
+        and it was built to borrow the target's own allocator as its full side.
+        So the composite the draft runner was configured with becomes the
+        engine's allocator, and the tree gains the existing SWA component over
+        the draft window; the target's allocation semantics do not change.
+        """
+        draft_allocator = self.draft_model_runner.token_to_kv_pool_allocator
+        if not isinstance(draft_allocator, SWATokenToKVPoolAllocator):
+            # The draft pool was not bounded (no windowed sizing), so nothing to
+            # bind; the draft keeps shadowing the target location space.
+            return
+        draft_pool = self.draft_model_runner.token_to_kv_pool
+        self.model_runner.token_to_kv_pool_allocator = draft_allocator
+        # Read by kv_cache_builder to attach the windowed sub-pool to the tree's
+        # SWA component and its HiCache entry (same channel as the draft pools
+        # on HiCacheDraftPlan).
+        self.model_runner.draft_swa_kv_pool = draft_pool.swa_kv_pool
+        self.model_runner.draft_swa_window = int(self.draft_window_size)
 
     def init_attention_backends(self):
         self._draft_worker.init_attention_backends()
