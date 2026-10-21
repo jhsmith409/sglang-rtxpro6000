@@ -25,7 +25,7 @@ qualification or reverse John's decision to reuse the 27B checks for 3.0.
 - [ ] Beta configurator updated for every accepted user-facing change, including defaults, supported combinations and generated startup settings. Record the checked revision on the release item.
 - [ ] Every new user setting appears where needed: native instructions, host container startup files, environment examples and configurator.
 - [ ] Configurator saves, reloads and passes settings to the launched process.
-- [ ] Defaults agree across native launchers, container startup files and generated configurations; 3.0 selects FR-Spec plus C1-only adaptive MTP, retaining FR-Spec with fixed W4 at C2+, without a new public optimization toggle.
+- [ ] Defaults agree across native launchers, container startup files and generated configurations; 3.1 selects the Flash-Next DFlash2 profile by default, with fixed width routing (block 6 at one request, block 4 at two or more), FR-Spec retained, automatic KV pool sizing, and the native-MTP recipes deprecated without a new public optimization toggle.
 - [ ] The narrowed GPU build is integrated: RTX PRO 6000 Blackwell inference at TP1/TP2, with Ampere/Ada retained for sidecar image processing. Record actual image identity and size; do not invent a size reduction.
 - [ ] Fresh-install and upgrade instructions fetch the correct files, including setup updates made after a runtime release.
 - [ ] Version references, image defaults and compatibility hashes are updated.
@@ -33,7 +33,7 @@ qualification or reverse John's decision to reuse the 27B checks for 3.0.
 
 ## README and documentation
 
-- [ ] Configuration reference completed after release scope and defaults are agreed: all supported settings and overrides, defaults and recommendations for each profile, where to set them, interactions, and restart/cache effects. Record the checked revision on the release item.
+- [ ] Configuration reference completed after release scope and defaults are agreed: all supported settings and overrides, defaults and recommendations for each profile, where to set them, interactions, and restart/cache effects (see [CONFIGURATION.md](CONFIGURATION.md)). Record the checked revision on the release item.
 - [ ] README and affected documentation updated for the final included features, settings and measured results. Record the checked revision on the release item.
 - [ ] Human-readable wording; no defensive qualification boilerplate.
 - [ ] Search terms, descriptive headings and canonical links preserved.

@@ -1,5 +1,28 @@
 # Penny Royal release history
 
+## 3.1 — Flash-Next DFlash2, automatic KV sizing, deprecated MTP
+
+- Flash-Next default profile is now DFlash2 with the separate
+  `incoai/Qwen3.8-Flash-Next-DFlash2` draft, the FR-Spec map, and the resident
+  rowwise-FP8 output head; the verification block is fixed by active concurrency
+  (block 6 at one request, block 4 at two or more).
+- The preset KV-token cap is gone: the engine sizes the shared pool from
+  profiled memory, and an explicit `MAX_TOTAL_TOKENS` stays available as a
+  page-aligned override. Draft GPU KV is bounded to its sliding window while
+  ordinary host HiCache capacity is preserved.
+- Scheduler admission accounting, stop-regex inside accepted speculative
+  blocks, and mixed token-probability requests are fixed.
+- TP2 is part of the new Flash-Next DFlash2 capability: it is expected to
+  work and has not been tested on two-GPU hardware.
+- The native NEXTN MTP Flash-Next profiles remain launchable with unchanged
+  recipes and are deprecated: no further updates or testing.
+
+See the [3.1 release notes](RELEASE_NOTES_3.1.md) for the change list with
+problem/fix/user effect and credits, the [machine-readable record](release-3.1.json)
+for source and validation identity, and [CONFIGURATION.md](CONFIGURATION.md)
+for the complete settings reference. Publication of the tag and image is
+tracked separately.
+
 ## 3.0.1 — PLE startup and container cache fixes
 
 Fix WSL2 RAM PLE device pointers, keep TileLang kernels in the persistent cache

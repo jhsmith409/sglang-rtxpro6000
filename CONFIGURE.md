@@ -95,16 +95,17 @@ and manage the files yourself. Restart the server to apply changed settings.
 - **Other settings:** model paths, ports, context/request capacity, reasoning,
   and the existing WSL2 host-memory workaround.
 
-For the full explanations, use [RUN.md](RUN.md), [FP8.md](FP8.md) and
-[NVME-PLE.md](NVME-PLE.md). Accepted kernel selection is automatic; users do not
-need a menu of internal optimization flags.
+For the full explanations, use [CONFIGURATION.md](CONFIGURATION.md),
+[RUN.md](RUN.md), [FP8.md](FP8.md) and [NVME-PLE.md](NVME-PLE.md). Accepted
+kernel selection is automatic; users do not need a menu of internal
+optimization flags.
 
 <a id="update-the-setup-files"></a>
 
 ## Updating the setup files
 
 Use the setup files from the same release as your runtime or image. The old
-v2.5.3 `setup1` tag remains an update for v2.5.3; it is not the 3.0 setup.
+v2.5.3 `setup1` tag remains an update for v2.5.3; it is not the 3.1 setup.
 Keep the configuration you currently use, generate a new one with the new
 checkout, and use its printed command when you are ready to switch.
 

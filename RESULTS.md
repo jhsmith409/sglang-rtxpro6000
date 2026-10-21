@@ -1,15 +1,107 @@
 # Qwen3.8 SGLang benchmarks on one RTX PRO 6000
 
-This record contains local benchmarks for Qwen3.8-27B FP8 with DFlash2 and
-Qwen3.8 Flash-Next NVFP4 with native NEXTN MTP on one NVIDIA RTX PRO
-6000 Blackwell 96 GB GPU (SM120). External results are labeled with their
-contributors, hardware, and scope. Each table names its timing method so
-different measurements remain distinct.
+This record contains local benchmarks for Qwen3.8 Flash-Next NVFP4 and
+Qwen3.8-27B FP8, both with DFlash2, on one NVIDIA RTX PRO 6000 Blackwell
+96 GB GPU (SM120). Earlier dated sections keep their own configurations,
+including the Flash-Next native NEXTN MTP era. External results are labeled
+with their contributors, hardware, and scope. Each table names its timing
+method so different measurements remain distinct.
 
 **Looking for other users' experience?** [Community results](COMMUNITY-RESULTS.md)
 keeps credited external field reports separate from our measurements, including
 week-long agentic use, Max-Q, both model profiles and multi-GPU deployments.
 The older H3PO raw table remains at its existing link.
+
+## Penny Royal 3.1
+
+Recorded October 2026 on one RTX PRO 6000 Blackwell (TP1). The Flash-Next
+profile is the new default: our OrcaRouter ModelOpt NVFP4 checkpoint with the
+separate `incoai/Qwen3.8-Flash-Next-DFlash2` draft, FR-Spec on the bundled
+65,536-ID map, width routed by active batch size (block 6 for one request,
+block 4 for two or more), 524,288-token context, 6 requests / 36 Mamba slots,
+`.95` static memory fraction, automatic KV pool sizing, RAM PLE, 32 decimal
+GB HiCache, and NIXL. The 27B profile keeps its FP8 target, its own DFlash2
+draft at fixed block 8, 4 requests / 24 slots, `.92`, and 96 decimal GB
+HiCache. TP2 is expected to work; it has not been tested on two-GPU hardware.
+Local numbers here are one inference card.
+
+### Completed presentation workflow (agentic)
+
+The real five-slide presentation ran end to end on the final candidate at
+runtime source `a60f4428f7aae4fd843cfb6f7cbda94d0aee7b82`, C1 with the routed
+block-6 width throughout:
+
+| Measurement | Result |
+|---|---:|
+| Native elapsed-weighted generation mean | **194.56 tok/s** |
+| Native sampled peak | **421.35 tok/s** |
+| Model turns / matched server requests | 121 / 121 |
+| Complete measured decode intervals | 1,676 over 909.385 seconds |
+| Server output tokens, including reasoning | 192,349 |
+| Prompt growth across the workflow | 42,637 to 253,267 tokens |
+| Total workflow time, including tools and rendering | 33 minutes 25 seconds |
+
+All turns matched the retained workflow timestamps one-to-one; no competing
+requests or width switches occurred. Native speed includes reasoning and
+excludes prefill, tool waits, idle, each request's first reporting interval,
+and unlogged final tails. Independent arithmetic verification matched. This
+was one natural xhigh workflow. The earlier recorded presentation averaged
+189.27 tok/s on a different configuration; these were not matched A/B runs.
+
+### Decode rates, by recorded configuration
+
+| Workload | Mean tok/s | Sampled peak tok/s | Source / configuration |
+|---|---:|---:|---|
+| Presentation workflow (agentic), C1 W6 | 194.56 | 421.35 | `a60f442`, DFlash2 + FR-Spec, routed W6 |
+| Coding flow, C1 W6 | 235.60 | 417.50 | `5ca3f39`, FR-Spec W6 |
+| Normal single request, C1 W6 (current default) | 228.44 | 336.20 | DFlash2 + FR-Spec, C1 W6 |
+| Regular C1 W4 | 214.18 | 306.44 | `5ca3f39`, FR-Spec fixed W4 |
+| Full six-request C6, aggregate | 566.14 | 657.52 | `5ca3f39`, FR-Spec W4, 15 full-C6 intervals |
+
+All rows are 3.1-candidate sources; the W4 screens keep their W4 labels. The
+coding-flow row is the accepted W6 timing for that tool workflow; its final
+handoff record was not retained, so the task's completion fact is listed
+separately from the measurement above. The corrected full-C6 mean supersedes
+the earlier drain-inclusive 522.69 tok/s summary. The six-request figure is
+the aggregate over the whole running batch, not the rate of each request.
+
+### Cold prefill
+
+| Prompt | Flash-Next tok/s | 27B tok/s |
+|---|---:|---:|
+| 63,906 tokens | 15,365.38 | 6,421.59 |
+| 489,921 tokens | 8,715.05 | 1,677.10 |
+
+Server initial-prefill timing on cold, uncached prompts.
+
+### 27B DFlash2 rates
+
+| Workload | Mean tok/s | Sampled peak tok/s | Source / configuration |
+|---|---:|---:|---|
+| Regular C1 W8 | 133.06 | 232.07 | `27f9eaa`, fixed W8 |
+| Full four-request C4, aggregate | 459.74 | 570.73 | `27f9eaa`, 14 full-C4 intervals |
+
+The corrected full-C4 mean supersedes the earlier drain-inclusive 386.26
+tok/s summary; a contaminated first C1 run remains excluded. The September 10
+and August 24 27B tables below stay as dated history.
+
+**Correctness and cache:** both profiles completed the recorded reasoning,
+tool, vision, long-context, and RAM/NIXL restore checks on the qualified
+sources. Current reasoning-suite scores are 93.46/100 (Flash-Next) and
+96.94/100 (27B), graded on actual answers; extended or repetitive reasoning
+is not penalized, and `ask_user` is treated as a valid tool choice. The
+recorded model and tool deviations stand. Flash-Next's final candidate boot
+resolved a 1,210,944-token shared KV pool with automatic sizing, and the
+accumulated `.95`-fraction evidence includes 49 successful image requests. The
+routing change passed 139 focused checks plus 24 subtests and two live
+C1→C2→C1→C6→C1 cycles with 122 correctly routed decode samples. The TP2
+capture support (PR89) passed 21 focused capture tests with pinned lint and an
+independent review.
+
+[Machine-readable release record](release-3.1.json) includes the exact source
+identities, settings, and validation scope. Publication of the tag, image, and
+GitHub release is still pending. The 3.0 and earlier entries below remain
+dated history with their original labels and timing methods.
 
 ## Penny Royal 3.0
 

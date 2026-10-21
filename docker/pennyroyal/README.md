@@ -173,7 +173,7 @@ above are the normal setup path.
 <a id="get-the-compose-files"></a>
 
 Existing Compose deployments can continue to use their own configuration.
-For 3.0, the documented setup is the ordinary `run.sh` and host startup files
+For 3.1, the documented setup is the ordinary `run.sh` and host startup files
 above.
 
 <!-- Compatibility anchors for earlier versions of this guide. -->

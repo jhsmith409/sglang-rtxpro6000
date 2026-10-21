@@ -9,7 +9,9 @@ testing. Both profiles serve an OpenAI-compatible model named `pennyroyal`.
 
 Build the release with [BUILD.md](BUILD.md) first. Container users should
 follow the separate [container guide](docker/pennyroyal/README.md).
-Pennyroyal does not include a native systemd service file.
+Pennyroyal does not include a native systemd service file. This page covers
+launching; [CONFIGURATION.md](CONFIGURATION.md) is the complete reference for
+every supported setting, its default, and its restart and cache effects.
 
 ## Configure and run
 
