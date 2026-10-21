@@ -3,7 +3,7 @@
 The profile has to resolve the qualified Flash-Next launch (DFLASH against the
 accepted NVFP4 Flash-Next target at the widest routed width — steps 5 and 6
 draft tokens — adaptive with the bundled fixed-width policy and the FR-Spec
-64K token map, the draft unquantized, the target's Triton verify path, the C6/36
+64K token map, the draft unquantized, the target's qualified FlashInfer verify path, the C6/36
 capacity pair, 524K context, 32 GB HiCache and the NIXL tier, automatic KV
 sizing inside the 0.95 static fraction, prefill CUDA graphs off with the
 runtime's own decode bucket list intact), and its cache identity has to name the
@@ -79,7 +79,7 @@ def test_recipe_resolves_the_intended_flash_next_dflash_launch(tmp_path):
         ("--hicache-size", "32"),
         ("--mamba-ssm-dtype", "bfloat16"),
         ("--gdn-mtp-cache-mode", "none"),
-        ("--linear-attn-verify-backend", "triton"),
+        ("--linear-attn-verify-backend", "flashinfer"),
         ("--reasoning-parser", "qwen3"),
         ("--tool-call-parser", "qwen3_coder"),
         ("--speculative-algorithm", "DFLASH"),

@@ -458,7 +458,7 @@ export DRAFT_MODEL=/path/to/incoai-Qwen3.8-Flash-Next-DFlash2
 | CUDA graphs | Prefill CUDA graphs disabled (`--disable-prefill-cuda-graph`); decode buckets stay on the runtime's own spec-decode list, so the single-request width keeps its bucket and the wider concurrent batches keep theirs |
 | Target features | Completed layers 5, 15, 25, 35 and 45, averaged over the four hyper-connection streams (5 x 2,560 into the draft's `fc`) |
 | Draft context | 2,048-token trained window; 524,288-position extension from this draft's own `rope_theta` 10000 and 262,144-token base |
-| Target verification | Triton linear-attention verify (`--linear-attn-verify-backend triton`) |
+| Target verification | FlashInfer linear-attention verify (`--linear-attn-verify-backend flashinfer`) |
 | State and host cache | 36 Mamba slots for 6 requests; RecoverSSM `none`; 32 GB HiCache; NIXL POSIX |
 
 This is the qualified Flash-Next path on RTX PRO 6000 at TP1: resident rowwise

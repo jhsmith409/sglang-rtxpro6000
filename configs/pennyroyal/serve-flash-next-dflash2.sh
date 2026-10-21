@@ -105,7 +105,7 @@ MAMBA_SSM_DTYPE=bfloat16
 MAMBA_CONV_DTYPE=bfloat16
 MAMBA_TRACK_INTERVAL=64
 PREFILL_CHUNK_SIZE=4096
-LINEAR_ATTN_VERIFY_BACKEND=triton
+LINEAR_ATTN_VERIFY_BACKEND=flashinfer
 SPECULATIVE_ALGORITHM=DFLASH
 # Verification width is routed, not tuned: the bundled fixed-width policy gives
 # block 6 (steps 5) to a single-request decode batch and block 4 (steps 3) to
