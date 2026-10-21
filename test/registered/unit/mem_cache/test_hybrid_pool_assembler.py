@@ -223,7 +223,9 @@ class TestTargetBudgetAndRegistration(CustomTestCase):
             token_to_kv_pool_allocator=allocator,
             page_size=1,
             draft_swa_device_pool=(
-                None if draft_slots is None else _DraftPool(24064 * 640, size=draft_slots)
+                None
+                if draft_slots is None
+                else _DraftPool(24064 * 640, size=draft_slots)
             ),
             draft_swa_window=2048 if draft_slots is not None else None,
         )
