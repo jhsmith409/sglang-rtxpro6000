@@ -213,6 +213,10 @@ class _PoolSizes(msgspec.Struct, frozen=True, kw_only=True):
     c128_state_pool_size: int
     c4_state_dtype: Optional[torch.dtype]
     c128_state_dtype: Optional[torch.dtype]
+    # Bounded capacity of a windowed DFLASH draft KV pool, in draft slots. It
+    # replaces max_total_num_tokens as that pool's physical size, so draft memory
+    # stops scaling with the target's token capacity.
+    draft_swa_max_total_num_tokens: Optional[int] = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -337,6 +341,12 @@ class KVCacheConfigurator:
             full_max_total_num_tokens = config.full_max_total_num_tokens
             swa_max_total_num_tokens = config.swa_max_total_num_tokens
 
+        # A windowed DFLASH draft owns a bounded windowed sub-pool; every other
+        # draft pool shadows the whole target location space.
+        draft_swa_max_total_num_tokens = (
+            config.draft_swa_max_total_num_tokens if self.is_draft_worker else None
+        )
+
         # Draft pools are replicated, not DCP-sharded, yet consume the shared
         # allocator's virtual locs in [0, max_total * dcp_size) untranslated.
         loc_scale = self.loc_space_scale
@@ -345,6 +355,13 @@ class KVCacheConfigurator:
             full_max_total_num_tokens *= loc_scale
         if swa_max_total_num_tokens is not None:
             swa_max_total_num_tokens *= loc_scale
+        if draft_swa_max_total_num_tokens is not None:
+            # Page-align to the pool's own (DCP-widened) page, or the draft's
+            # paged backend reads a short last page.
+            page = max(int(self.pool_page_size or 1), 1)
+            draft_swa_max_total_num_tokens = (
+                (draft_swa_max_total_num_tokens * loc_scale + page - 1) // page * page
+            )
 
         # DSV4 compressed-attention pool sizes. Draft worker reuses target's
         # full/swa sizes but does NOT own c4/c128/state pools (those live on
@@ -378,6 +395,7 @@ class KVCacheConfigurator:
             c128_state_pool_size=c128_state_pool_size,
             c4_state_dtype=c4_state_dtype,
             c128_state_dtype=c128_state_dtype,
+            draft_swa_max_total_num_tokens=draft_swa_max_total_num_tokens,
         )
 
     def _init_pools(
@@ -1057,6 +1075,8 @@ class KVCacheConfigurator:
                 token_to_kv_pool = self._build_mla_kv_pool(
                     max_total_num_tokens=sizes.max_total_num_tokens,
                 )
+        elif self.is_draft_worker and sizes.draft_swa_max_total_num_tokens:
+            token_to_kv_pool = self._build_windowed_draft_kv_pool(sizes=sizes)
         else:
             if self.is_hybrid_swa:
                 token_to_kv_pool = self._build_hybrid_swa_kv_pool(
@@ -1537,6 +1557,35 @@ class KVCacheConfigurator:
         )
         return token_to_kv_pool
 
+    def _build_windowed_draft_kv_pool(self, *, sizes: _PoolSizes) -> KVCache:
+        """All-windowed KV pool for a windowed DFLASH draft.
+
+        Every DFLASH draft layer is a sliding-window layer, so the pool takes the
+        all-SWA shape the hybrid-SWA pools already implement: no full sub-pool
+        (0 layers -> 0 bytes) and a windowed sub-pool of
+        ``draft_swa_max_total_num_tokens`` slots. Draft attention reads and
+        writes through the target's cache locations and the pool's
+        full->window mapping resolves them, so the draft's physical footprint is
+        bounded by its window instead of shadowing the target's whole location
+        space.
+        """
+        return SWAKVPool(
+            size=0,
+            size_swa=sizes.draft_swa_max_total_num_tokens,
+            page_size=self.pool_page_size,
+            dtype=self.kv_cache_dtype,
+            head_num=self.model_config.get_num_kv_heads(
+                get_parallel().attn_tp_size, get_parallel().attn_dcp_size
+            ),
+            head_dim=self.model_config.head_dim,
+            swa_attention_layer_ids=list(
+                range(self.layer_info.start_layer, self.layer_info.end_layer)
+            ),
+            full_attention_layer_ids=[],
+            device=self.device,
+            enable_kv_cache_copy=(get_spec().speculative_algorithm is not None),
+        )
+
     def _build_minimax_sparse_kv_pool(self, *, max_total_num_tokens: int) -> KVCache:
         from sglang.srt.server_args import m3_fp8_attn_gemm_enabled
 
@@ -1853,6 +1902,23 @@ class KVCacheConfigurator:
             if hasattr(req_to_token_pool, "register_dsv4_allocator"):
                 req_to_token_pool.register_dsv4_allocator(token_to_kv_pool_allocator)
 
+        elif self.is_draft_worker and sizes.draft_swa_max_total_num_tokens:
+            # A windowed draft pool owns its bounded slot space: reuse the
+            # hybrid-SWA allocator, borrowing the target's own allocator as the
+            # full side so target allocation semantics are untouched. Every
+            # windowed-slot concern the hybrid-SWA path already answers (page
+            # aligned full->window mapping, free_swa reclamation, HiCache
+            # mapping rebuild) now covers the draft's KV too.
+            return SWATokenToKVPoolAllocator(
+                size=sizes.max_total_num_tokens,
+                size_swa=sizes.draft_swa_max_total_num_tokens,
+                page_size=self.pool_page_size,
+                dtype=self.kv_cache_dtype,
+                device=self.device,
+                kvcache=token_to_kv_pool,
+                need_sort=need_sort,
+                full_attn_allocator=token_to_kv_pool_allocator,
+            )
         else:
             assert self.is_draft_worker
             # The draft's QSA page ledger is registered with its pools at the

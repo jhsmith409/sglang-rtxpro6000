@@ -45,6 +45,9 @@ class TreeCacheBuildContext:
     tp_group: Any
     full_tokens_per_layer: Optional[int] = None
     is_dsa: bool = False
+    # The tree's SWA component window for a windowed DFLASH draft pool on a
+    # target with no sliding-window layers of its own (see CacheInitParams).
+    draft_swa_window: Optional[int] = None
 
 
 RadixCacheFactory = Callable[[TreeCacheBuildContext], BasePrefixCache]
@@ -159,7 +162,10 @@ def _create_unified_radix_cache(
     from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
 
     tree_components = [ComponentType.FULL]
-    if ctx.is_hybrid_swa:
+    if ctx.is_hybrid_swa or ctx.draft_swa_window is not None:
+        # A draft-only window still needs the component that retains, reclaims
+        # and rebuilds windowed slots; it reads the window from the same
+        # CacheInitParams field a hybrid-SWA model fills in.
         tree_components.append(ComponentType.SWA)
     if ctx.is_hybrid_ssm:
         tree_components.append(ComponentType.MAMBA)

@@ -8,6 +8,7 @@ from sglang.srt.mem_cache.base_swa_memory_pool import BaseSWAKVPool
 from sglang.srt.mem_cache.memory_pool import (
     DSATokenToKVPool,
     KVCache,
+    KVWriteLoc,
     MHATokenToKVPool,
     MLATokenToKVPool,
     unwrap_write_loc,
@@ -230,6 +231,37 @@ class SWAKVPool(BaseSWAKVPool):
         # -1 in kv_indices maps to -1 via the sentinel appended to the mapping.
         return self.full_to_swa_index_mapping[kv_indices]
 
+    def set_kv_buffer_prefix_valid(
+        self,
+        layer: RadixAttention,
+        loc_2d,
+        commit_lens: torch.Tensor,
+        cache_k: torch.Tensor,
+        cache_v: torch.Tensor,
+        k_scale=None,
+        v_scale=None,
+    ):
+        """Prefix-valid commit, translated through the full->SWA mapping.
+
+        The DFLASH draft materializes a whole verify block but commits only the
+        accepted prefix, and it does that straight into its KV pool; the pool is
+        windowed, so the target locations must resolve to window slots first.
+        Rows past a request's commit length are not written, so their (possibly
+        already reclaimed, hence -1) locations cannot disturb the pool.
+        """
+        layer_id_pool, is_swa_layer = self.layers_mapping[layer.layer_id]
+        if not is_swa_layer:
+            raise NotImplementedError(
+                "prefix-valid commit writes SWA-sub-pool layers only; got "
+                f"layer_id={layer.layer_id}."
+            )
+        loc = loc_2d
+        if not isinstance(loc_2d, KVWriteLoc):
+            loc = self.translate_loc_from_full_to_swa(loc_2d)
+        return self.swa_kv_pool.set_kv_buffer_prefix_valid(
+            layer, loc, commit_lens, cache_k, cache_v, k_scale, v_scale
+        )
+
     def set_kv_buffer(
         self,
         layer: RadixAttention,
@@ -246,9 +278,15 @@ class SWAKVPool(BaseSWAKVPool):
         pool = self.swa_kv_pool if is_swa_layer else self.full_kv_pool
         if is_swa_layer:
             # swa_loc is the full->SWA translation, computed once per forward by
-            # the attention backend; set_kv_buffer never translates internally.
-            assert swa_loc is not None
-            loc = swa_loc
+            # the attention backend; the bundle is the hot path. A caller that
+            # holds only the target location (e.g. a DFLASH draft KV commit, which
+            # writes through the pool directly instead of through a backend) is
+            # translated here rather than failing.
+            loc = (
+                swa_loc
+                if swa_loc is not None
+                else self.translate_loc_from_full_to_swa(loc)
+            )
         if isinstance(pool, MLATokenToKVPool):
             pool.set_kv_buffer(
                 None,

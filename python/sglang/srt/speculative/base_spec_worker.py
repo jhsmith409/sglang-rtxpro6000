@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 import torch
 
+from sglang.srt.mem_cache.base_swa_memory_pool import BaseSWAKVPool
 from sglang.srt.model_executor.graph_memory_usage import (
     merge_graph_memory_usage,
     merge_graph_time_usage,
@@ -245,6 +246,17 @@ class BaseSpecWorker(ABC):
         if not draft_runners:
             return HiCacheDraftPlan()
         draft_pools = tuple(runner.token_to_kv_pool for runner in draft_runners)
+        if spec_algorithm.is_dflash_family() and all(
+            isinstance(pool, BaseSWAKVPool) and pool.full_kv_pool.layer_num == 0
+            for pool in draft_pools
+        ):
+            # A windowed DFLASH draft has a bounded, windowed pool: its rows are
+            # indexed by the draft's own window slots, not by the target's KV
+            # index space, so it is not a draft sidecar of that space. The tree's
+            # SWA component and the SWA host tier carry it instead (see
+            # build_draft_swa_entry), and the draft's slots must not be packed
+            # into the target's KV host pool.
+            return HiCacheDraftPlan()
         if (
             "InklingForConditionalGenerationMTP"
             in draft_runners[0].model_config.hf_config.architectures
