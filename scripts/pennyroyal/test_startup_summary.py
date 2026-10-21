@@ -262,8 +262,36 @@ class StartupSummaryTest(unittest.TestCase):
                 self.assertIn("Pennyroyal startup — requested settings", current_output)
                 # The approved 3.0 default swaps the Next launchers' static
                 # NEXTN 3/1/4 profile for the adaptive one; outside that one
-                # segment the two argvs must stay byte-identical.
-                self.assertEqual(self._adaptive_30_default(base_argv), current_argv)
+                # segment, and outside the one memory-fraction value the
+                # retained-MTP update is allowed to carry, the two argvs must
+                # stay byte-identical.
+                self.assertEqual(
+                    self._retained_frspec_fraction(
+                        self._adaptive_30_default(base_argv), launcher
+                    ),
+                    self._retained_frspec_fraction(current_argv, launcher),
+                )
+
+    # The FR-Spec native-MTP recipe is the one launcher whose static fraction is
+    # an accepted, recorded change rather than a regression: .981 as booted in the
+    # v2.3-v3.0.2 records, and the measured .97 that the retained-MTP
+    # configuration update keeps for it. Any other value still has to match the
+    # base argv literally, and the 27B recipe's .92 is never normalised.
+    RETAINED_FRSPEC_FRACTIONS = ("0.981", "0.97")
+
+    @classmethod
+    def _retained_frspec_fraction(cls, argv: list[str], launcher: str) -> list[str]:
+        if (
+            launcher != "serve-flash-next-frspec.sh"
+            or "--mem-fraction-static" not in argv
+        ):
+            return argv
+        at = argv.index("--mem-fraction-static")
+        if argv[at + 1] not in cls.RETAINED_FRSPEC_FRACTIONS:
+            return argv
+        updated = list(argv)
+        updated[at + 1] = "<retained native fraction>"
+        return updated
 
     @staticmethod
     def _adaptive_30_default(argv: list[str]) -> list[str]:
