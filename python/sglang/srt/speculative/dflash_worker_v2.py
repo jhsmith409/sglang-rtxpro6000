@@ -71,6 +71,7 @@ from sglang.srt.speculative.spec_utils import (
     GrammarTree,
     assign_req_to_token_pool_func,
     build_grammar_vocab_mask,
+    load_token_map,
 )
 from sglang.srt.utils import (
     get_available_gpu_memory,
@@ -324,6 +325,7 @@ class DFlashWorkerV2(BaseSpecWorker):
         self._draft_sampler = None
         self.draft_model = bundle.draft_model
         self.selector = self.draft_model.candidate_selector
+        self._require_selector_for_token_map(self.selector)
         draft_config = parse_dflash_draft_config(
             draft_hf_config=self.draft_model_runner.model_config.hf_config
         )
@@ -460,6 +462,18 @@ class DFlashWorkerV2(BaseSpecWorker):
         )
         if self.use_compact_draft_cache:
             self._bind_windowed_draft_allocator()
+        # FR-Spec: validate the token map and install the reduced selector head
+        # here, on every startup path, rather than inside the graph-capture
+        # branch. SGLANG_DFLASH_EAGER_DRAFT_SAMPLER=1, a disabled decode graph,
+        # or the low-memory fallback all skip that branch; installing here means
+        # an unusable map fails at startup and no request path loads the map or
+        # allocates the head.
+        if self.selector is not None:
+            self._install_selector_head(
+                unwrap_lora_layer(
+                    getattr(self._target_worker.model_runner.model, "lm_head", None)
+                )
+            )
 
     def _bind_windowed_draft_allocator(self) -> None:
         """Route the engine through the draft's windowed full/SWA allocator.
@@ -520,6 +534,47 @@ class DFlashWorkerV2(BaseSpecWorker):
             capture_decode_cuda_graph=capture_decode_cuda_graph
         )
 
+    @staticmethod
+    def _require_selector_for_token_map(selector) -> None:
+        """A token map only has an effect where DFlash2 projects candidates."""
+        if selector is None and get_spec().speculative_token_map is not None:
+            raise ValueError(
+                "--speculative-token-map is only consumed by a DFlash2 selector "
+                "draft (dflash_config.selector_rank): the hot head replaces the "
+                "candidate projection, which only that draft performs. This DFLASH "
+                "draft has no candidate selector."
+            )
+
+    def _install_selector_head(self, lm_head) -> None:
+        """Attach the candidate-projection head once, ahead of any capture.
+
+        No token map: the draft keeps pointing at the full target head (existing
+        behavior). With ``--speculative-token-map``: the draft also installs a
+        reduced head built from that map's rows of the same target Parameter, so
+        the eager fallback and the captured graph project the identical head and
+        both emit ORIGINAL global token ids. Allocation is one-time (guarded),
+        never per-step, and the target head stays resident and untouched.
+        """
+        if lm_head is None:
+            return
+        self.draft_model.lm_head = lm_head
+        if self.draft_model.candidate_head is not None:
+            return
+        token_map = get_spec().speculative_token_map
+        if token_map is None:
+            return
+        width = self.draft_model.install_hot_candidate_head(
+            lm_head, load_token_map(token_map)
+        )
+        if self.ps.tp_rank == 0:
+            logger.info(
+                "DFLASH selector FR-Spec: candidate projection reduced to the "
+                "%d-row hot head selected from the target lm_head (the target "
+                "head itself is unchanged); shortlist rows map back to global "
+                "token ids before the selector and verification.",
+                width,
+            )
+
     def _maybe_build_draft_sampler(self):
         def _eager(reason):
             if self.ps.tp_rank == 0:
@@ -552,7 +607,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                 or is_rowwise_fp8_head_weight(head_weight)
             ):
                 return _eager("unsupported quantized lm_head")
-            self.draft_model.lm_head = lm_head
+            self._install_selector_head(lm_head)
             if self.ps.tp_rank == 0:
                 logger.info(
                     "DFLASH selector decode (greedy + sampling) folded into the "
@@ -1018,8 +1073,8 @@ class DFlashWorkerV2(BaseSpecWorker):
     ) -> torch.Tensor:
         """The eager fallback for batches the draft graph cannot take."""
         draft_model = self.draft_model
-        if draft_model.lm_head is None:
-            draft_model.lm_head = lm_head
+        # Same install path as the pre-capture screen: one head, global ids.
+        self._install_selector_head(lm_head)
 
         draft_hidden = draft_logits_output.hidden_states
         if draft_hidden is None:
