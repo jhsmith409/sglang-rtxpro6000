@@ -14,10 +14,15 @@ optional profile: the
 existing OrcaRouter ModelOpt NVFP4
 target with the separate `incoai/Qwen3.8-Flash-Next-DFlash2` draft, FR-Spec on
 the bundled 65,536-ID map, and verification widths fixed by active concurrency —
-block 6 for one running request, block 4 for two or more. Automatic KV pool
+block 6 for one running request, block 4 for two or more. Accepted draft tokens
+verify through FlashInfer's SM120 kernels (`--linear-attn-verify-backend
+flashinfer`, fixed in the recipes; earlier candidates verified through the
+Triton path). Automatic KV pool
 sizing replaces the preset cap; an explicit `MAX_TOTAL_TOKENS` override remains.
 The 27B FP8 DFlash2 profile
-is unchanged at fixed block 8. Most runtime PRs are merged to public main; the
+is unchanged at fixed block 8. Native width routing comes from the bundled
+fixed policy `configs/pennyroyal/adaptive-next.json`, pinned by the launch
+recipes. Most runtime PRs are merged to public main; the
 release status is preparation with final publication pending:
 the planned tag is `pennyroyal-v3.1.0` and the planned image is
 `ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0`; see release-3.1.json for source
@@ -79,18 +84,25 @@ are aggregate, not per-request rates. Use normal non-greedy sampling and record
 the actual reasoning settings. A synthetic agent transcript is not a real
 tool workflow.
 
-Current Flash-Next results on one RTX PRO 6000: the completed five-slide
-presentation workflow (agentic) at C1 with the block-6 width on the final
-candidate (`a60f442`) recorded 194.56 tok/s mean / 421.35 sampled peak; the
-coding flow at C1 W6 recorded 235.60 / 417.50 (`5ca3f39`); the optional-profile
-normal single-request screen at C1 W6 recorded 228.44 / 336.20 (DFlash2 +
-FR-Spec); the regular single-request screen at C1 with fixed W4 recorded 214.18
-/ 306.44; the full six-request batch (aggregate, W4) recorded 566.14 / 657.52.
-Current 27B results at fixed W8 (`27f9eaa`): 133.06 / 232.07 single request,
-459.74 / 570.73 full four-request aggregate. Each row keeps its recorded source
-and width label; see RESULTS.md for the exact conditions.
+Current Flash-Next results on one RTX PRO 6000, final candidate source
+(`a60f442`): the maintained native-MTP default recorded 227.54 tok/s mean /
+375.90 sampled peak for a single request at its routed block-8 width; on the
+optional DFlash2 profile with FlashInfer verification, a single request at
+block 6 recorded 241.49 / 339.53, the full six-request batch at block 4
+recorded 504.80 / 568.90 aggregate, and the completed ten-slide presentation
+workflow (agentic, explicit medium) recorded 217.19 / 448.70 with 70 model
+turns and 132,873 output tokens. Dated earlier 3.1 screens on the Triton
+verification path remain in RESULTS.md: the five-slide xhigh presentation
+194.56 / 421.35, the coding flow 235.60 / 417.50 (`5ca3f39`), the normal
+single request 228.44 / 336.20, and the fixed-W4 screens 214.18 / 306.44 and
+566.14 / 657.52. A medium-effort coding rerun did not complete and is not an
+accepted published benchmark. Current 27B results at fixed W8 (`27f9eaa`): 133.06
+/ 232.07 single request, 459.74 / 570.73 full four-request aggregate. Each row
+keeps its recorded source, profile and width label; see RESULTS.md for the
+exact conditions.
 
-The reasoning suite scored 93.46/100 (Flash-Next) and 96.94/100 (27B) with
+The reasoning suite scored 93.46/100 (Flash-Next, recorded on the DFlash2
+qualification) and 96.94/100 (27B) with
 actual answer grading on the qualified sources; extended or repetitive
 reasoning is not penalized and `ask_user` is a valid tool choice. Recorded
 deviations are listed with the measurements.
@@ -108,8 +120,8 @@ deviations are listed with the measurements.
 - [Validation suite](https://github.com/jpezzulli/pennyroyal-validation): Maintained reasoning, tool, image and performance tests.
 
 Penny Royal did almost all the coding for these releases, including ports and
-integration; John, Penny and Codex worked through the architecture, tuning and
-debugging together. Direct Penny contributors for 3.1: @jhsmith409 and
+integration; John, Penny and Codex worked through the architecture, tuning,
+verification-backend choice and debugging together. Direct Penny contributors for 3.1: @jhsmith409 and
 @LocalhostRonin.
 
 ## Configuration reference

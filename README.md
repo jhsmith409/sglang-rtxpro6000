@@ -9,14 +9,13 @@
 
 Run long conversations, coding agents, and tool-heavy workflows on your own
 hardware. Penny Royal is an SGLang-derived runtime tuned for **NVIDIA RTX PRO
-6000 Blackwell (SM120), with one card (TP1) or two (TP2)**. TP2 is expected to
-work; it has not been tested on two-GPU hardware.
+6000 Blackwell (SM120), with one card (TP1) or two (TP2)**.
 
 **Persistent conversation caching is at the heart of Penny.** HiCache and NIXL
 keep reusable state in system RAM and on NVMe, beyond what fits on the GPU,
 so long-running sessions can pick up from cached history.
 
-**524K context · HiCache + NIXL · DFlash2 + FR-Spec**
+**524K context · HiCache + NIXL · FR-Spec · FlashInfer verification · DFlash2**
 
 [Get started](#build-and-launch) · [Conversation cache](#hicache-and-nixl) ·
 [Performance](#performance) ·
@@ -24,9 +23,10 @@ so long-running sessions can pick up from cached history.
 
 **Penny Royal 3.1:** Flash-Next runs native NEXTN MTP with FR-Spec as the
 maintained default profile, with automatic KV pool sizing replacing the preset
-cap; Flash-Next DFlash2 with a separate draft model and fixed concurrency width
-routing (block 6 for one request, block 4 for two or more) is fully available
-as an optional profile.
+cap; Flash-Next DFlash2 with a separate draft model, fixed concurrency
+width routing (block 6 for one request, block 4 for two or more) and
+FlashInfer draft-token verification is fully available as an optional
+profile.
 
 <a id="hicache-and-nixl"></a>
 
@@ -61,16 +61,17 @@ how the state is stored and restored.
 
 ## What's new in 3.1
 
-Flash-Next gets **DFlash2 with FR-Spec** and its own draft model,
-`incoai/Qwen3.8-Flash-Next-DFlash2`, as an optional profile. The draft block is
-**fixed by active concurrency** — block 6 for a single running request, block 4
-for two or more. The **KV pool is sized automatically**
-from profiled memory instead of a preset cap; an explicit
-`MAX_TOTAL_TOKENS` remains available. The native NEXTN MTP recipes remain the
-maintained default and keep receiving updates and testing. Scheduler
-admission, stop-regex inside speculative blocks and mixed-probability requests
-are fixed. TP2 is expected to work; it has not been tested on two-GPU
-hardware. See the
+Flash-Next keeps **native NEXTN MTP with FR-Spec as the maintained default**,
+and its verify width is now **fixed by active concurrency** - block 8 for a
+single running request, block 4 for two or more - so the width is identical at
+every boot. **DFlash2 with FR-Spec** and its own draft model,
+`incoai/Qwen3.8-Flash-Next-DFlash2`, is an optional profile with the same
+concurrency-routed widths (block 6 at one request, block 4 at two or more),
+and it now verifies accepted draft tokens with **FlashInfer's SM120 kernel**.
+The **KV pool is sized automatically** from profiled memory instead of a preset
+cap; an explicit `MAX_TOTAL_TOKENS` remains available. Scheduler admission,
+stop-regex inside speculative blocks and mixed-probability requests are fixed.
+See the
 [3.1 release notes](RELEASE_NOTES_3.1.md) for the full change list and the
 [configuration reference](CONFIGURATION.md) for every supported setting.
 
@@ -84,25 +85,29 @@ images, HiCache RAM prefix caching, and optional NIXL disk caching.
 
 | Model | Weights | Speculative decoding | Checkpoints |
 |---|---|---|---|
-| **Qwen3.8 Flash-Next** | NVFP4 experts, automatic FP8 dense layers on SM120 | DFlash2 with a separate draft model and FR-Spec; width routed by batch size (block 6 at C1, block 4 at C2+); maintained native NEXTN MTP is the default | [Our OrcaRouter ModelOpt conversion](https://huggingface.co/jpezzulli/OrcaRouter-Qwen3.8-Flash-Next-Uncensored-ModelOpt-NVFP4) · [RadixArk](https://huggingface.co/RadixArk/Qwen3.8-Flash-Next-NVFP4) · [Flash-Next DFlash2 draft](https://huggingface.co/incoai/Qwen3.8-Flash-Next-DFlash2) |
+| **Qwen3.8 Flash-Next** | NVFP4 experts, automatic FP8 dense layers on SM120 | Maintained native NEXTN MTP with FR-Spec is the default, width routed by batch size (block 8 at C1, block 4 at C2+); optional DFlash2 profile (separate draft model, FR-Spec, block 6 at C1 / block 4 at C2+) verifies draft tokens with FlashInfer | [Our OrcaRouter ModelOpt conversion](https://huggingface.co/jpezzulli/OrcaRouter-Qwen3.8-Flash-Next-Uncensored-ModelOpt-NVFP4) · [RadixArk](https://huggingface.co/RadixArk/Qwen3.8-Flash-Next-NVFP4) · [Flash-Next DFlash2 draft](https://huggingface.co/incoai/Qwen3.8-Flash-Next-DFlash2) |
 | **Qwen3.8-27B** | FP8 | DFlash2, with a separate draft model at fixed block 8 | [Qwen FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8) · [DFlash2 draft](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) |
 
 I personally run Flash-Next on **one RTX PRO 6000 at C=6**, with **524,288-token
-context** and the KV pool sized automatically from profiled memory; the final
-3.1 candidate boot resolved a **1,210,944-token** shared GPU pool. That pool is
-shared across active requests and cached prefixes.
+context** and the KV pool sized automatically from profiled memory; the 3.1
+candidate boot of the optional DFlash2 profile resolved the observed shared
+**target KV pool** of **1,210,944 tokens**. The maintained native-MTP
+profile sizes its pool the same way and reports the resolved number at startup.
+That pool is shared across active requests and cached prefixes.
 
 ### How draft width is routed
 
-The Flash-Next DFlash2 profile pairs the NVFP4 target with the separate
-`incoai/Qwen3.8-Flash-Next-DFlash2` draft and FR-Spec. The verification block
-is fixed by active concurrency, read from the bundled policy file
+Both Flash-Next speculation paths read their verification width from a bundled
+fixed policy, keyed only by how many requests are generating together: the
+maintained native-MTP recipes from `configs/pennyroyal/adaptive-next.json`,
+and the optional DFlash2 profile (NVFP4 target with the separate
+`incoai/Qwen3.8-Flash-Next-DFlash2` draft and FR-Spec) from
 `configs/pennyroyal/adaptive-dflash2.json`:
 
-| Requests generating together | Draft behavior |
-|---|---|
-| **C=1** | Fixed six-token blocks. |
-| **C=2 or more** | Fixed four-token blocks; speculative decoding stays on. |
+| Requests generating together | Native MTP (`next`, `next-plain`) | DFlash2 (`next-dflash2`, optional) |
+|---|---|---|
+| **C=1** | Fixed eight-token blocks. | Fixed six-token blocks. |
+| **C=2 or more** | Fixed four-token blocks. | Fixed four-token blocks. |
 
 One candidate width per tier means the width is a lookup, so it is identical
 between boots, and a single request gets the wider draft without making every
@@ -114,9 +119,12 @@ searched by the draft head; routing selects how many tokens it drafts. The
 target model keeps its full vocabulary. The maintained default is the
 [FR-Spec native-MTP recipe](RUN.md#launch-flash-next-with-fr-spec), with the
 [non-FR recipe](RUN.md#launch-flash-next-without-fr-spec-alternative) also
-selectable; the optional
-[DFlash2 recipe](RUN.md#launch-flash-next-with-dflash2) remains fully
-available as an opt-in.
+selectable - without the map, and with the same block 8 / block 4 routing; the
+optional [DFlash2 recipe](RUN.md#launch-flash-next-with-dflash2) - which
+verifies its draft tokens with FlashInfer's SM120 kernel - remains
+fully available as an opt-in. DFlash2 offers more token-pool capacity; we are
+still evaluating performance across concurrency levels. TP2 for the DFlash2
+profile is expected to work; it has not been tested on two-GPU hardware.
 
 For 27B alternatives, see the [Swift 27B results](SWIFT-27B.md) and the
 [OrcaRouter FP8 checkpoint](https://huggingface.co/orcarouter/Qwen3.8-27B-Uncensored-FP8).
@@ -129,34 +137,36 @@ For 27B alternatives, see the [Swift 27B results](SWIFT-27B.md) and the
 
 ### Flash-Next 3.1
 
-**Presentation workflow (agentic): 194.56 tok/s mean, 421.35 peak (C1, block 6). Coding flow: 235.60 mean, 417.50 peak (C1, block 6).**
+**Native MTP default, single request: 227.54 tok/s mean, 375.90 peak (C1, block 8). DFlash2 with FlashInfer verification: 241.49 mean, 339.53 peak (C1, block 6); 504.80 / 568.90 aggregate (C6, block 4).**
 
 Measured on one RTX PRO 6000 Blackwell, using our OrcaRouter ModelOpt NVFP4
-checkpoint, FR-Spec with DFlash2, a 524K context limit, and normal non-greedy
-sampling. The completed presentation ran on the final 3.1 candidate source; the
-other rows keep the source and width of the screen that recorded them.
+checkpoint, FR-Spec, a 524K context limit, and normal non-greedy sampling on
+the final 3.1 candidate source (`a60f442`). Every rate is SGLang's native
+generation rate, including reasoning; prefill, tool execution, and idle time
+are separate.
 
-| Workload | Mean tok/s | Sampled peak tok/s |
+| Profile / workload | Mean tok/s | Sampled peak tok/s |
 |---|---:|---:|
-| Presentation workflow (agentic), C1 W6 | **194.56** | **421.35** |
-| Coding flow, C1 W6 | **235.60** | **417.50** |
-| Single request, C1 W6, optional DFlash2 profile | **228.44** | **336.20** |
-| Single request, C1 fixed W4 | 214.18 | 306.44 |
-| Six concurrent requests, aggregate, fixed W4 | 566.14 | 657.52 |
+| Native MTP (maintained default), single request, C1 W8 | **227.54** | **375.90** |
+| DFlash2 + FlashInfer (optional profile), single request, C1 W6 | **241.49** | **339.53** |
+| DFlash2 + FlashInfer, six concurrent requests, aggregate, C6 W4 | **504.80** | **568.90** |
+| DFlash2 + FlashInfer, presentation workflow (agentic), C1 W6 | **217.19** | **448.70** |
 
-These are **SGLang's native generation rates**, including reasoning. Prefill,
-tool execution, and idle time are separate. The presentation completed end to
-end: 121 model turns and 192,349 output tokens at block 6 with one request
-generating. [Current results](RESULTS.md#penny-royal-31) records the sources,
-intervals and settings behind every number.
+The presentation workflow completed end to end: 70 model turns and 132,873
+output tokens at block 6 with one request generating, and its finished deck
+previewed. The earlier coding and five-slide presentation screens, recorded on
+the DFlash2 Triton verification path, keep their original labels in
+[RESULTS.md](RESULTS.md#earlier-31-decode-screens-on-the-triton-path).
+[Current results](RESULTS.md#penny-royal-31) records the sources, intervals
+and settings behind every number.
 
-| Cold prompt | Mean prefill tok/s |
+| Cold prompt (Flash-Next DFlash2) | Mean prefill tok/s |
 |---|---:|
 | 63,906 tokens | **15,365.38** |
 | 489,921 tokens | **8,715.05** |
 
-The reasoning suite scored **93.46/100** on the qualified source, graded on
-actual answers. See [results and measurement settings](RESULTS.md#penny-royal-31)
+The Flash-Next DFlash2 reasoning qualification scored **93.46/100**. See
+[results and measurement settings](RESULTS.md#penny-royal-31)
 for the tool checks, cache restore, sampling details, and earlier results.
 
 <a id="27b-fp8--dflash2-performance-at-a-glance"></a>
@@ -263,8 +273,9 @@ For 3.1, **[@jhsmith409](https://github.com/jhsmith409)** and
 **[@LocalhostRonin](https://github.com/LocalhostRonin)** contributed directly.
 [Penny Royal](mailto:Pennyroyal@agentmail.to) did almost all the coding across
 these releases, including the ports and integration work. [John](https://github.com/jpezzulli),
-Penny and Codex worked through the architecture, implementation, tuning and debugging
-together, with plenty of back and forth over what was actually worth keeping.
+Penny and Codex worked through the architecture, implementation, tuning,
+verification-backend choice and debugging together, with plenty of back and forth
+over what was actually worth keeping.
 
 ## Documentation
 

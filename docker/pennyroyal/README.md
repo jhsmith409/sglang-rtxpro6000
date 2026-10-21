@@ -17,7 +17,7 @@ Your host
   config/
     start-flash-next-frspec.sh   model and SGLang startup settings (default)
     start-flash-next.sh    native-MTP startup settings without FR-Spec
-    start-flash-next-dflash2.sh  optional Flash-Next DFlash2 + draft startup settings
+    start-flash-next-dflash2.sh  optional Flash-Next DFlash2 + draft startup settings (FlashInfer verify)
     start-27b-dflash2.sh   alternative 27B + draft startup settings
     nixl-posix.toml / nixl-posix-frspec.toml   disk-cache settings
   model files             mounted read-only at /models
@@ -89,7 +89,7 @@ PLE placement and image preprocessing are in this startup file.
 |---|---|
 | Flash-Next, native NEXTN MTP with FR-Spec (default, qualified) | `config/start-flash-next-frspec.sh` |
 | Flash-Next without FR-Spec | `config/start-flash-next.sh` |
-| Flash-Next with DFlash2 + FR-Spec (optional, qualified) | `config/start-flash-next-dflash2.sh` |
+| Flash-Next with DFlash2 + FR-Spec + FlashInfer verify (optional, qualified) | `config/start-flash-next-dflash2.sh` |
 | 27B FP8 with DFlash2 | `config/start-27b-dflash2.sh` |
 
 The native-MTP profiles are the maintained default with their existing
@@ -105,10 +105,14 @@ of the tensor-parallel inference pair.
 
 FR-Spec is on for `next` and off for `next-plain`. It narrows the
 draft vocabulary; the verify width is fixed by concurrency: block 8 for a
-single running request, block 4 for every batch of two or more. On the DFlash2 profile the same FR-Spec
-map rides along, and the width is routed the same way: block 6 for one running
-request, block 4 for two or more, from the image's
-`configs/pennyroyal/adaptive-dflash2.json`.
+single running request, block 4 for every batch of two or more, from the
+image's `configs/pennyroyal/adaptive-next.json` (the startup file pins the
+policy's SHA-256). On the DFlash2 profile the same FR-Spec map rides along,
+and the width is routed the same way: block 6 for one running request, block
+4 for two or more, from the image's
+`configs/pennyroyal/adaptive-dflash2.json`. That profile verifies accepted
+draft tokens with FlashInfer's SM120 kernel
+(`--linear-attn-verify-backend flashinfer`, fixed in the startup file).
 
 ## Start and verify
 

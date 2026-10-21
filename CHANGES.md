@@ -5,9 +5,10 @@
 - Flash-Next gains an optional DFlash2 profile with the separate
   `incoai/Qwen3.8-Flash-Next-DFlash2` draft, the FR-Spec map, and the resident
   rowwise-FP8 output head; the verification block is fixed by active concurrency
-  (block 6 at one request, block 4 at two or more). The maintained default
-  stays the native NEXTN MTP profile with FR-Spec, and explicit DFlash2
-  selections are preserved.
+  (block 6 at one request, block 4 at two or more), and the profile verifies
+  accepted draft tokens with FlashInfer's SM120 kernels by default (PR104).
+  The maintained default stays the native NEXTN MTP profile with FR-Spec, and
+  explicit DFlash2 selections are preserved.
 - The preset KV-token cap is gone: the engine sizes the shared pool from
   profiled memory, and an explicit `MAX_TOTAL_TOKENS` stays available as a
   page-aligned override. Draft GPU KV is bounded to its sliding window while
@@ -19,13 +20,19 @@
 - The native NEXTN MTP Flash-Next profiles are the maintained default with
   unchanged recipes and continue to receive updates and testing. Their verify
   width is fixed by active concurrency — block 8 at one running request,
-  block 4 at two or more — rather than acceptance-adaptive selection.
+  block 4 at two or more — rather than acceptance-adaptive selection, from
+  `configs/pennyroyal/adaptive-next.json`, pinned by the launch recipes
+  (SHA-256 `3edaa87d66f535caae0bddb8f457f03fce0f6dc1f4e8091b20495a0dc9da41fb`) (PR103).
+- The beta configurator learned the `next-dflash2` profile (PR94). The
+  maintained native-MTP profile is restored as the default for new setups
+  (PR102); the external container configuration files and the manual native
+  recipes remain the primary paths.
 
 See the [3.1 release notes](RELEASE_NOTES_3.1.md) for the change list with
 problem/fix/user effect and credits, the [machine-readable record](release-3.1.json)
 for source and validation identity, and [CONFIGURATION.md](CONFIGURATION.md)
 for the complete settings reference. Publication of the tag and image is
-tracked separately.
+tracked separately; no official tag, image or GitHub release exists yet.
 
 ## 3.0.1 — PLE startup and container cache fixes
 

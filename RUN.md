@@ -82,8 +82,9 @@ the launcher. Stop and restart the server after changing them.
 
 ## Launch Flash-Next with FR-Spec
 
-**Maintained native MTP, the default.** This recipe still works exactly as before and its
-recipe is unchanged; it remains what new setups start on, and the opt-in
+**Maintained native MTP, the default.** This recipe remains what new setups start
+on and keeps its measured model, memory and capacity settings; the verify-width
+routing described below is new in 3.1. The opt-in
 [Flash-Next with DFlash2](#launch-flash-next-with-dflash2) is a separate choice.
 Native NEXTN MTP is part of the target checkpoint, so only the target model is
 required:
@@ -99,6 +100,15 @@ then includes the map hash in the NIXL namespace. The reduced draft vocabulary
 leaves the target vocabulary and acceptance policy unchanged. Gabriel's
 [`gabrielolympie/sglang-flashnext-sm120`](https://github.com/gabrielolympie/sglang-flashnext-sm120)
 is the source of the reduced-vocabulary work.
+
+The verify width is fixed by active concurrency through the bundled policy
+`configs/pennyroyal/adaptive-next.json`: block 8 for a single running request,
+block 4 for every batch of two or more, one candidate per tier, so the width
+is identical between boots and the acceptance EMA cannot move it. The recipe
+pins the policy's SHA-256
+(`3edaa87d66f535caae0bddb8f457f03fce0f6dc1f4e8091b20495a0dc9da41fb`) and
+launches at the widest routed block
+(`--speculative-num-steps 7 --speculative-num-draft-tokens 8`).
 
 The extra BF16 draft head uses 320 MiB. The recipe asks for no KV pool size:
 SGLang profiles the free GPU memory and fits the pool inside the static memory
@@ -418,7 +428,7 @@ export TARGET_MODEL=/path/to/RadixArk-Qwen3.8-Flash-Next-NVFP4
 | Target | ModelOpt NVFP4 weights and activations on selected Linear modules |
 | Other tensors | BF16 excluded/unquantized tensors and recurrent state |
 | Target/native-MTP KV | FP8 E4M3 |
-| Speculation and context | Native NEXTN; 524,288-token YaRN context |
+| Speculation and context | Native NEXTN, width fixed by concurrency (block 8 at C1, block 4 at C2+; the same pinned policy as the FR-Spec recipe); 524,288-token YaRN context |
 | State and host cache | 24 Mamba slots; RecoverSSM `none`; 32 GiB HiCache; NIXL POSIX |
 | Linear attention | Explicit FlashInfer GDN decode/prefill, FP16-accumulate MMA mode |
 
@@ -440,7 +450,10 @@ hf download incoai/Qwen3.8-Flash-Next-DFlash2 \
 The FR-Spec map and the width-routing policy are already in this repository
 (`configs/pennyroyal/frspec/flash-next-64k.pt` and
 `configs/pennyroyal/adaptive-dflash2.json`), so the container path needs no extra
-files beyond the launch scripts.
+files beyond the launch scripts. The profile now uses FlashInfer for target
+linear-attention verification (`--linear-attn-verify-backend flashinfer`);
+both the native recipe and the container startup files select it
+automatically.
 
 ```bash
 cd "$REPO_ROOT"
@@ -458,12 +471,14 @@ export DRAFT_MODEL=/path/to/incoai-Qwen3.8-Flash-Next-DFlash2
 | CUDA graphs | Prefill CUDA graphs disabled (`--disable-prefill-cuda-graph`); decode buckets stay on the runtime's own spec-decode list, so the single-request width keeps its bucket and the wider concurrent batches keep theirs |
 | Target features | Completed layers 5, 15, 25, 35 and 45, averaged over the four hyper-connection streams (5 x 2,560 into the draft's `fc`) |
 | Draft context | 2,048-token trained window; 524,288-position extension from this draft's own `rope_theta` 10000 and 262,144-token base |
-| Target verification | FlashInfer linear-attention verify (`--linear-attn-verify-backend flashinfer`) |
+| Target verification | FlashInfer linear-attention verify (`--linear-attn-verify-backend flashinfer`, fixed in the recipe; no operator toggle) |
 | State and host cache | 36 Mamba slots for 6 requests; RecoverSSM `none`; 32 GB HiCache; NIXL POSIX |
 
 This is the qualified Flash-Next path on RTX PRO 6000 at TP1: resident rowwise
-FP8, the FR-Spec map, and the fixed 6-at-C1 / 4-at-C2-and-above routing described
-above. The model card's own numbers were taken against the official FP8 target
+FP8, the FR-Spec map, FlashInfer verification of accepted draft tokens, and the
+fixed 6-at-C1 / 4-at-C2-and-above routing described above. DFlash2 offers more
+token-pool capacity; we are still evaluating performance across concurrency
+levels. The model card's own numbers were taken against the official FP8 target
 on one GB300 at block 4, so they still say nothing about this NVFP4, SM120,
 six-request stack — read your resolved token pool and request admission in the
 startup output on your first boot. TP1 is the qualified default; TP2 is expected

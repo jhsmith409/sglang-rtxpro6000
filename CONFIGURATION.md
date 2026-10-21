@@ -42,7 +42,7 @@ server.
 |---|---|---|---|---|
 | Target | OrcaRouter ModelOpt NVFP4 Flash-Next | Qwen3.8-27B FP8 | Flash-Next NVFP4 | Flash-Next NVFP4 |
 | Draft | `incoai/Qwen3.8-Flash-Next-DFlash2`, BF16 unquantized | `incoai/Qwen3.8-27B-DFlash2` | none (in-checkpoint NEXTN head) | none |
-| Speculation | DFLASH; FR-Spec 65,536-ID map; width routed: block **6** at one running request, **4** at two or more | DFLASH, fixed block 8 | NEXTN MTP + FR-Spec; width fixed by concurrency: block **8** at one running request, **4** at two or more | NEXTN MTP only |
+| Speculation | DFLASH; FR-Spec 65,536-ID map; width routed: block **6** at one running request, **4** at two or more; accepted draft tokens verified by FlashInfer's SM120 kernel | DFLASH, fixed block 8 | NEXTN MTP + FR-Spec; width fixed by concurrency: block **8** at one running request, **4** at two or more | NEXTN MTP only |
 | `--mem-fraction-static` | 0.95 | 0.92 (pinned) | 0.97 | 0.981 |
 | Requests / Mamba slots | 6 / 36 | 4 / 24 (pinned) | 4 / 24 | 4 / 24 |
 | Context | 524,288 (pinned) | 524,288 (pinned) | 524,288 (pinned) | 524,288 (pinned) |
@@ -53,10 +53,18 @@ server.
 | TP | 1 default; 2 accepted | 1 (pinned) | 1 default; 2 accepted | 1 default; 2 accepted |
 | PLE placement | `ram` or `nvme` | `ram` only | `ram` or `nvme` | `ram` or `nvme` |
 
-The Flash-Next DFlash2 verify width is fixed by active concurrency through the
-bundled policy file `configs/pennyroyal/adaptive-dflash2.json`: one candidate
-width per tier, and the launch carries the widest routed block
-(`--speculative-num-steps 5 --speculative-num-draft-tokens 6`). The 3.0-era
+The verify width on every maintained Flash-Next profile is fixed by active
+concurrency through a bundled policy file: the native-MTP recipes read
+`configs/pennyroyal/adaptive-next.json` (block **8** at one running request,
+block **4** at two or more; the recipes pin its SHA-256 `3edaa87d66f535caae0bddb8f457f03fce0f6dc1f4e8091b20495a0dc9da41fb`) and
+the DFlash2 profile reads `configs/pennyroyal/adaptive-dflash2.json` (block 6
+at one running request, block 4 at two or more). One candidate width per tier,
+and each launch carries the widest routed block (`--speculative-num-steps 7
+--speculative-num-draft-tokens 8` native; `--speculative-num-steps 5
+--speculative-num-draft-tokens 6` DFlash2). The DFlash2 profile verifies
+accepted draft tokens with FlashInfer's SM120 kernel
+(`--linear-attn-verify-backend flashinfer`), fixed in the recipe and startup
+files; there is no public toggle for it. The 3.0-era
 `SPECULATIVE_NUM_DRAFT_TOKENS` setting therefore does not exist on this
 profile — setup names it as unavailable rather than forwarding a value the
 policy would ignore. The routed profile also keeps a batch-1 decode graph
@@ -102,7 +110,7 @@ bucket and runs with `--disable-prefill-cuda-graph`.
 |---|---|---|
 | `SGLANG_SM120_ONLINE_MXFP8` | unset (automatic) | Eligible Flash-Next SM120 launches select the accepted rowwise-FP8 path themselves. `false` pins the original checkpoint precision; `true` forces the conversion. A saved private compatibility override, not everyday tuning — see [FP8.md](FP8.md). |
 | `FLASHINFER_GDN_FP16_ACCUM_MMA` | `1` on the Next recipes | FP16-accumulate MMA mode of the patched FlashInfer SM12x delta-rule prefill kernels; `0` runs the kernels as released. The resolved mode is part of the NIXL namespace, so the two modes use separate persistent roots and nothing is deleted. The `27b` recipe never sets it (Triton GDN). |
-| `--speculative-adaptive-config` | bundled `configs/pennyroyal/adaptive-dflash2.json` | The fixed routing policy file for `next-dflash2` (block 6 at BS1, block 4 at BS2+). A DFLASH tier with two candidates is refused, not averaged. No operator environment key. |
+| `--speculative-adaptive-config` | bundled per-profile policy file | Fixed routing policy: `configs/pennyroyal/adaptive-next.json` on `next` and `next-plain` (block 8 at BS1, block 4 at BS2+; SHA-256 `3edaa87d66f535caae0bddb8f457f03fce0f6dc1f4e8091b20495a0dc9da41fb`, pinned by the recipes) and `configs/pennyroyal/adaptive-dflash2.json` on `next-dflash2` (block 6 at BS1, block 4 at BS2+). A DFLASH tier with two candidates is refused, not averaged. No operator environment key. |
 | `SPECULATIVE_NUM_DRAFT_TOKENS` | removed | The 3.0-era block-width knob is gone on `next-dflash2`: the routing policy owns the width. `27b` keeps its own fixed block 8 in the recipe. |
 
 ## Reasoning and request behaviour
@@ -159,9 +167,9 @@ from a launch generated with `NIXL=off`.
   identity.
 - **Native-MTP profiles are maintained.** `next` and `next-plain` launch
   with their existing recipes and their fixed concurrency widths (block 8 at
-  one running request, block 4 at two or more), remain
+  one running request, block 4 at two or more, from the pinned policy), remain
   the default for new setups, and keep receiving updates; `next-dflash2` is
-  the opt-in alternative.
+  the opt-in alternative, verified through FlashInfer's SM120 kernel.
 
 ## Restarts and cache effects
 
