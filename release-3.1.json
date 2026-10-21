@@ -3,9 +3,9 @@
   "version": "3.1.0",
   "status": {
     "publication_approved": false,
-    "source_publication": "pending",
+    "source_publication": "Accepted runtime and setup PRs merged; release documentation prepared.",
     "container": "pending",
-    "note": "Draft release notes. Most runtime PRs are merged to public main; the Flash-Next setup candidate (PR94) awaits mechanical CI follow-ups. Tag, image build and digest are recorded on the GitHub release when publication completes."
+    "note": "Release tag, versioned image and GitHub release await final approval and the candidate image check."
   },
   "source": {
     "base_release": "pennyroyal-v3.0.2",
@@ -15,7 +15,10 @@
     "local_integration_revision": "a0f8e27774e9d1dfd263b9c4c32870e87bf9cebf",
     "release_tag": "pennyroyal-v3.1.0",
     "release_url": "https://github.com/jpezzulli/sglang-rtxpro6000/releases/tag/pennyroyal-v3.1.0",
-    "published_revision": null
+    "published_revision": null,
+    "merged_runtime_and_setup_revision": "d5886cc07b3bd4e05ff6a350f6a59a9df7f472b8",
+    "accepted_setup_pr": 94,
+    "accepted_setup_head": "6407975420d57859e54fa94ff71263b20f95fda9"
   },
   "container": {
     "image": "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0",
@@ -27,91 +30,130 @@
       "id": "flash_next_dflash2_profile",
       "pr": 94,
       "summary": "Flash-Next DFlash2 launch profile and setup candidate: separate incoai/Qwen3.8-Flash-Next-DFlash2 draft, FR-Spec 65,536-ID map, resident rowwise-FP8 output head reuse, 0.95 memory fraction for image-workload headroom, 6 requests / 36 Mamba slots, 524,288-token context, 2,048-token draft window, HiCache/NIXL unchanged; becomes the default profile for new setups.",
-      "profiles": ["Flash-Next DFlash2"]
+      "profiles": [
+        "Flash-Next DFlash2"
+      ]
     },
     {
       "id": "fixed_width_routing",
       "pr": 100,
       "summary": "Verify width is fixed by active concurrency through the bundled fixed policy: block 6 at one running request, block 4 at two or more; one candidate per tier keeps the width stable between boots. Proposal-probability scratch is keyed by width and routing stays valid when a width captures nothing. The 3.0-era SPECULATIVE_NUM_DRAFT_TOKENS setting is retired on this profile.",
-      "profiles": ["Flash-Next DFlash2"]
+      "profiles": [
+        "Flash-Next DFlash2"
+      ]
     },
     {
       "id": "automatic_kv_pool_sizing",
       "pr": 86,
       "summary": "Remove the preset KV-token cap; the engine sizes the shared pool from profiled memory inside the static memory fraction. An explicit MAX_TOTAL_TOKENS remains a deliberate positive, page-aligned override on every profile.",
-      "profiles": ["Flash-Next DFlash2", "Flash-Next", "27B DFlash2"]
+      "profiles": [
+        "Flash-Next DFlash2",
+        "Flash-Next",
+        "27B DFlash2"
+      ]
     },
     {
       "id": "frspec_candidate_projection",
       "pr": 93,
       "summary": "FR-Spec candidate projection for DFlash2 narrows the draft's searched vocabulary while the target keeps full verification.",
-      "profiles": ["Flash-Next DFlash2"]
+      "profiles": [
+        "Flash-Next DFlash2"
+      ]
     },
     {
       "id": "resident_rowwise_fp8_head",
       "pr": 90,
       "summary": "Support the resident rowwise FP8 output head in DFlash2 so the draft reuses the target's converted head.",
-      "profiles": ["Flash-Next DFlash2"]
+      "profiles": [
+        "Flash-Next DFlash2"
+      ]
     },
     {
       "id": "bounded_draft_kv",
       "pr": 91,
       "summary": "Bound draft GPU KV allocation to sliding-window requirements.",
-      "profiles": ["Flash-Next DFlash2", "27B DFlash2"]
+      "profiles": [
+        "Flash-Next DFlash2",
+        "27B DFlash2"
+      ]
     },
     {
       "id": "preserve_host_hicache_capacity",
       "pr": 92,
       "summary": "Preserve ordinary host HiCache capacity while the draft GPU pool stays bounded.",
-      "profiles": ["Flash-Next DFlash2", "27B DFlash2"]
+      "profiles": [
+        "Flash-Next DFlash2",
+        "27B DFlash2"
+      ]
     },
     {
       "id": "tp2_capture_correction",
       "pr": 89,
       "summary": "Remove the incorrect tp_size > 1 rejection from DFlash2 capture; ordinary TP2 already produces complete replicated hyper-connection state at the capture point. TP2 is expected to work; it has not been tested on two-GPU hardware.",
-      "profiles": ["Flash-Next DFlash2"]
+      "profiles": [
+        "Flash-Next DFlash2"
+      ]
     },
     {
       "id": "admission_accounting",
-      "pr": [87, 88],
+      "pr": [
+        87,
+        88
+      ],
       "summary": "Drop finished requests from the running batch before every admission and count a request's held req_to_token row once at admission.",
-      "profiles": ["all"]
+      "profiles": [
+        "all"
+      ]
     },
     {
       "id": "stop_regex_in_speculative_blocks",
       "pr": 96,
       "summary": "Honor stop-regex matches inside accepted speculative blocks on both DFlash2 block sizes.",
-      "profiles": ["Flash-Next DFlash2", "27B DFlash2"]
+      "profiles": [
+        "Flash-Next DFlash2",
+        "27B DFlash2"
+      ]
     },
     {
       "id": "mixed_logprob_scheduler_crash",
       "pr": 97,
       "summary": "Prevent the identified scheduler crash when token-probability requests mix with ordinary generation.",
-      "profiles": ["all"]
+      "profiles": [
+        "all"
+      ]
     },
     {
       "id": "mtp_memory_fraction_retained",
       "pr": 95,
       "summary": "Retain the measured .97 memory fraction for the native MTP FR-Spec recipe, separate from the DFlash2 .95 default.",
-      "profiles": ["Flash-Next (deprecated native MTP)"]
+      "profiles": [
+        "Flash-Next (deprecated native MTP)"
+      ]
     },
     {
       "id": "native_mtp_deprecation",
       "pr": 94,
       "summary": "Native NEXTN MTP Flash-Next profiles remain launchable with unchanged recipes but are deprecated: no further updates or testing.",
-      "profiles": ["Flash-Next", "Flash-Next non-FR"]
+      "profiles": [
+        "Flash-Next",
+        "Flash-Next non-FR"
+      ]
     },
     {
       "id": "upstream_fix_subset",
       "pr": 79,
       "summary": "Agreed subset: QSA restore ordering, packed scratch initialization, shared Chat/Responses chat_template trust gate, absent tool-call fields, stream timestamps, malformed-image 400s, collection before KV sizing, existing ignore_eos accounting, freed-response-state handling.",
-      "profiles": ["all"]
+      "profiles": [
+        "all"
+      ]
     },
     {
       "id": "swift_ple_transplant",
       "pr": 76,
       "summary": "Optional Swift FP8 PLE transplant/verification recipe with whole-data-section, table-width, scale and payload validation; serving qualification remains contributor-owned.",
-      "profiles": ["Swift-1.5 (optional recipe)"]
+      "profiles": [
+        "Swift-1.5 (optional recipe)"
+      ]
     }
   ],
   "settings": {
@@ -128,7 +170,10 @@
     "27b_fixed_block_size": 8,
     "context_length_tokens": 524288,
     "kv_pool": "automatic on every profile; explicit MAX_TOTAL_TOKENS remains available",
-    "hicache_default_gb": {"next_profiles": 32, "27b": 96},
+    "hicache_default_gb": {
+      "next_profiles": 32,
+      "27b": 96
+    },
     "nixl_default": "on",
     "model_weights_changed": false,
     "target_model_weights": "unchanged for both profiles",
@@ -145,24 +190,59 @@
     "shared_fix_gates": "27B invocation bd881ef9f57d4a31b01ef60d33d6fcaa (2026-10-20 23:23-23:24 EDT) passed the PR96 regex cases and PR97 mixed-probability stream; follow-up generation and health passed with no new runtime or GPU failures.",
     "both_profiles": {
       "reasoning_tools_vision_long_context_ram_nixl_restore": "completed recorded checks on the qualified sources",
-      "reasoning_scores": {"flash_next": "93.46/100", "27b": "96.94/100"},
+      "reasoning_scores": {
+        "flash_next": "93.46/100",
+        "27b": "96.94/100"
+      },
       "grading": "Actual answer grading; extended or repetitive reasoning is not penalized; ask_user is a valid tool choice."
-    }
+    },
+    "setup": "178 affected setup checks OK (two local skips); 66 focused pytest cases passed; final Docker CMD correction passed 22 container checks; integrated summary fixture passed eight checks. Three functional source reviews completed; final review clean. GitHub Contributor checks passed on 6407975420.",
+    "setup_ci_url": "https://github.com/jpezzulli/sglang-rtxpro6000/actions/runs/39607992358"
   },
   "performance": {
     "native_mean_and_sampled_peak_tok_s": {
-      "flash_next_presentation_c1w6_final": [194.56, 421.35],
-      "flash_next_coding_flow_c1w6": [235.60, 417.50],
-      "flash_next_normal_c1_w4": [214.18, 306.44],
-      "flash_next_full_c6_aggregate_w4": [566.14, 657.52],
-      "flash_next_reasoning_c1_w4": [210.24, 300.79],
-      "27b_normal_c1_w8": [133.06, 232.07],
-      "27b_full_c4_aggregate": [459.74, 570.73],
-      "27b_reasoning_c1_w8": [125.88, 215.93]
+      "flash_next_presentation_c1w6_final": [
+        194.56,
+        421.35
+      ],
+      "flash_next_coding_flow_c1w6": [
+        235.6,
+        417.5
+      ],
+      "flash_next_normal_c1_w4": [
+        214.18,
+        306.44
+      ],
+      "flash_next_full_c6_aggregate_w4": [
+        566.14,
+        657.52
+      ],
+      "flash_next_reasoning_c1_w4": [
+        210.24,
+        300.79
+      ],
+      "27b_normal_c1_w8": [
+        133.06,
+        232.07
+      ],
+      "27b_full_c4_aggregate": [
+        459.74,
+        570.73
+      ],
+      "27b_reasoning_c1_w8": [
+        125.88,
+        215.93
+      ]
     },
     "cold_prefill_server_tok_s": {
-      "prompt_63906": {"flash_next": 15365.38, "27b": 6421.59},
-      "prompt_489921": {"flash_next": 8715.05, "27b": 1677.10}
+      "prompt_63906": {
+        "flash_next": 15365.38,
+        "27b": 6421.59
+      },
+      "prompt_489921": {
+        "flash_next": 8715.05,
+        "27b": 1677.1
+      }
     },
     "presentation_detail": "Real five-slide workflow on final source a60f442 at C1 W6: 121 model turns matched 121 server requests, 1,676 complete decode intervals over 909.385 s, 192,349 server output tokens including reasoning, prompt growth 42,637 to 253,267 tokens; total workflow time including tools and rendering was 33 minutes 25 seconds.",
     "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak from the same window, including reasoning; normal non-greedy sampling. Rows keep their recorded source/configuration labels: 5ca3f39 for the FR-Spec fixed-W4 normal/full-C6 and W6 coding-flow screens, earlier 27f9eaa for the W4 reasoning and 27B fixed-W8 screens, and a60f442 for the presentation. C4/C6 rows are aggregate over the full running batch, not per-request rates. The corrected full-batch means supersede the earlier drain-inclusive 522.69/386.26 summaries. The coding-flow timing was accepted explicitly; its final handoff record was not retained, so that task's completion fact is recorded separately from the measurement.",

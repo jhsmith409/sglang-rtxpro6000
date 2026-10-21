@@ -1,14 +1,7 @@
 # Penny Royal 3.1
 
-Draft release notes. Publication of the tag `pennyroyal-v3.1.0`, the
-`ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0` image and the GitHub release page
-is still in progress; most runtime changes are already merged to public main,
-and the Flash-Next setup candidate (PR94) awaits mechanical CI follow-ups.
-Final publication identities are recorded on the GitHub release when done.
-
-Penny Royal 3.1 moves Qwen3.8 Flash-Next onto DFlash2 speculation with FR-Spec
-and makes that the default profile, and replaces the preset KV-token cap with
-automatic pool sizing. Qwen3.8-27B FP8 with DFlash2 remains the second
+Penny Royal 3.1 makes DFlash2 with FR-Spec the default for Qwen3.8 Flash-Next
+and replaces the preset KV-token cap with automatic pool sizing. Qwen3.8-27B FP8 with DFlash2 remains the second
 supported profile. The target is RTX PRO 6000 Blackwell with one card (TP1) or
 two (TP2).
 
@@ -28,18 +21,11 @@ HiCache capacity (PR91, PR92).
 
 **Verification widths are fixed by active concurrency:** block 6 for a single
 running request, block 4 for every batch of two or more, read from the bundled
-policy `configs/pennyroyal/adaptive-dflash2.json`. One candidate width per tier
-keeps behaviour identical between boots, and a single request still gets the
-wider draft without making a busy batch pay that extra draft work. The
-3.0-era `SPECULATIVE_NUM_DRAFT_TOKENS` setting is retired on this profile —
-setup names it as unavailable rather than forwarding a value the policy would
-ignore.
+policy `configs/pennyroyal/adaptive-dflash2.json`.
 
-**Native NEXTN MTP is deprecated, not removed.** The `next` and `next-plain`
-profiles still launch with their unchanged recipes, including FR-Spec and the
-C1-only adaptive 4/8 selector, and the FR-Spec recipe keeps its separately
-measured `.97` memory fraction (PR95). They receive no further updates or
-testing; new setups should start on the DFlash2 profile.
+**Native NEXTN MTP is deprecated.** The `next` and `next-plain` profiles
+remain available, with and without FR-Spec respectively. They receive no
+further updates or testing. New setups use the DFlash2 profile.
 
 ## KV pool sizing is automatic
 
@@ -114,8 +100,8 @@ download the release's launch-file set and run
 `ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0` with the matching startup files,
 per the [container guide](docker/pennyroyal/README.md). Update any explicit
 image pin — `PENNYROYAL_IMAGE=` in saved setup settings or the Compose `.env`,
-or the `IMAGE=` value in an edited `run.sh` (keep the assignment; the script
-runs under `set -u`) — to `v3.1.0`, or pass `--image`. Existing target weights
+or the `IMAGE=` value in an edited `run.sh` — to
+`ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0`, or pass that image name with `--image`. Existing target weights
 are unchanged; the Flash-Next DFlash2 profile needs the new
 `incoai/Qwen3.8-Flash-Next-DFlash2` draft download. Your saved settings, model
 folders and persistent caches stay as they are, and no blanket cache deletion

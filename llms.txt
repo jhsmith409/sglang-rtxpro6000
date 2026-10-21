@@ -6,7 +6,7 @@ Canonical repository: https://github.com/jpezzulli/sglang-rtxpro6000
 Display name: Penny Royal. CLI, API model name, paths and package identifiers
 keep the existing `pennyroyal` spelling.
 
-Penny Royal 3.1 (in release preparation; tag and image pending) makes
+Penny Royal 3.1 makes
 Flash-Next DFlash2 the default profile: the existing OrcaRouter ModelOpt NVFP4
 target with the separate `incoai/Qwen3.8-Flash-Next-DFlash2` draft, FR-Spec on
 the bundled 65,536-ID map, and verification widths fixed by active concurrency —

@@ -22,7 +22,7 @@ so long-running sessions can pick up from cached history.
 [Performance](#performance) ·
 [3.1 release notes](RELEASE_NOTES_3.1.md) · [Community results](COMMUNITY-RESULTS.md)
 
-**Penny Royal 3.1 (in release preparation):** Flash-Next now runs DFlash2 with
+**Penny Royal 3.1:** Flash-Next now runs DFlash2 with
 FR-Spec and a separate draft model as the default profile, with fixed
 concurrency width routing (block 6 for one request, block 4 for two or more),
 automatic KV pool sizing replacing the preset cap, and the native NEXTN MTP
@@ -136,7 +136,7 @@ other rows keep the source and width of the screen that recorded them.
 
 | Workload | Mean tok/s | Sampled peak tok/s |
 |---|---:|---:|
-| Presentation workflow, C1 W6 (final candidate source) | **194.56** | **421.35** |
+| Presentation workflow, C1 W6 | **194.56** | **421.35** |
 | Coding flow, C1 W6 | **235.60** | **417.50** |
 | Single request, fixed W4 | 214.18 | 306.44 |
 | Six concurrent requests, aggregate, fixed W4 | 566.14 | 657.52 |
