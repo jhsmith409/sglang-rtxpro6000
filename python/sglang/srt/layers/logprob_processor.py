@@ -142,7 +142,11 @@ def get_token_ids_logprobs_raw(
     if stage == LogprobStage.DECODE:
         for i, token_ids in enumerate(token_ids_logprobs_list):
             if token_ids is None:
-                vals.append([])
+                # In tensor mode every row must survive the consumers
+                # that normalize with .tolist() (_normalize_decode_outputs,
+                # move_logprobs_to_cpu), so a non-requester row stays an
+                # empty tensor, mirroring the batch-optimized producer.
+                vals.append(logprobs.new_empty(0) if no_copy_to_cpu else [])
                 idxs.append([])
             else:
                 token_ids_tensor = torch.tensor(token_ids, dtype=torch.long).to(
