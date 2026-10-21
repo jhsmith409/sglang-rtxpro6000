@@ -4,9 +4,8 @@
 
 - Flash-Next default profile is now DFlash2 with the separate
   `incoai/Qwen3.8-Flash-Next-DFlash2` draft, the FR-Spec map, and the resident
-  rowwise-FP8 output head; verification width is routed by active batch size
-  (block 6 at one request, block 4 at two or more) rather than acceptance-driven
-  adaptation.
+  rowwise-FP8 output head; the verification block is fixed by active concurrency
+  (block 6 at one request, block 4 at two or more).
 - The preset KV-token cap is gone: the engine sizes the shared pool from
   profiled memory, and an explicit `MAX_TOTAL_TOKENS` stays available as a
   page-aligned override. Draft GPU KV is bounded to its sliding window while

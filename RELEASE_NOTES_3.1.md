@@ -1,114 +1,110 @@
 # Penny Royal 3.1
 
-Release preparation state: the source is integrated and documentation is
-final; the public merge, immutable tag `pennyroyal-v3.1.0`, image build, and
-release page are still pending and will be recorded on the GitHub release.
+Draft release notes. Publication of the tag `pennyroyal-v3.1.0`, the
+`ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0` image and the GitHub release page
+is still in progress; most runtime changes are already merged to public main,
+and the Flash-Next setup candidate (PR94) awaits mechanical CI follow-ups.
+Final publication identities are recorded on the GitHub release when done.
 
 Penny Royal 3.1 moves Qwen3.8 Flash-Next onto DFlash2 speculation with FR-Spec
-and makes that the default profile, replaces the preset KV-token cap with
-automatic pool sizing, and deprecates the native NEXTN MTP Flash-Next profiles.
-Qwen3.8-27B FP8 with DFlash2 remains the second supported profile. The target
-is RTX PRO 6000 Blackwell with one card (TP1) or two (TP2).
+and makes that the default profile, and replaces the preset KV-token cap with
+automatic pool sizing. Qwen3.8-27B FP8 with DFlash2 remains the second
+supported profile. The target is RTX PRO 6000 Blackwell with one card (TP1) or
+two (TP2).
 
 ## Flash-Next gets its own DFlash2 draft
 
-- **A separate next-draft model.** The new default profile
-  (`PENNYROYAL_PROFILE=next-dflash2`) runs the accepted OrcaRouter ModelOpt
-  NVFP4 Flash-Next target against the separate
-  [`incoai/Qwen3.8-Flash-Next-DFlash2`](https://huggingface.co/incoai/Qwen3.8-Flash-Next-DFlash2)
-  draft at full 524,288-token context. The draft is a distinct download; the
-  target, precision, and cache stack are unchanged. If you are coming from
-  3.0.x, this is the one new model to fetch.
-- **Fixed concurrency width routing, not acceptance tuning.** The draft block
-  is a lookup on the active batch size from the bundled
-  `configs/pennyroyal/adaptive-dflash2.json`: block 6 for a single running
-  request, block 4 for every batch of two or more. One candidate per tier
-  means acceptance feedback can never move the width, so behaviour is
-  predictable and the old `SPECULATIVE_NUM_DRAFT_TOKENS` knob is retired on
-  this profile rather than silently ignored. FR-Spec rides along on the same
-  bundled 65,536-ID token map; the target keeps its full vocabulary.
-- **Resident rowwise-FP8 output head.** The draft reuses the target's own
-  online-FP8 rowwise output head instead of carrying a second copy (PR90), and
-  the candidate projection with the FR-Spec map reduces the draft's search work
-  (PR93).
+The new default profile (`PENNYROYAL_PROFILE=next-dflash2`) runs the accepted
+OrcaRouter ModelOpt NVFP4 Flash-Next target — same weights, same precision,
+same cache stack — against the separate
+[`incoai/Qwen3.8-Flash-Next-DFlash2`](https://huggingface.co/incoai/Qwen3.8-Flash-Next-DFlash2)
+draft at full 524,288-token context. That draft is the one new download this
+release. The profile ships with the 65,536-ID FR-Spec map, the resident
+rowwise-FP8 output head shared with the target (PR90), candidate projection
+through the FR-Spec map (PR93), a `.95` static memory fraction for
+image-workload headroom, 6 requests / 36 Mamba slots, a 2,048-token draft
+window, and draft GPU KV bounded to the sliding window without taking host
+HiCache capacity (PR91, PR92).
+
+**Verification widths are fixed by active concurrency:** block 6 for a single
+running request, block 4 for every batch of two or more, read from the bundled
+policy `configs/pennyroyal/adaptive-dflash2.json`. One candidate width per tier
+keeps behaviour identical between boots, and a single request still gets the
+wider draft without making a busy batch pay that extra draft work. The
+3.0-era `SPECULATIVE_NUM_DRAFT_TOKENS` setting is retired on this profile —
+setup names it as unavailable rather than forwarding a value the policy would
+ignore.
+
+**Native NEXTN MTP is deprecated, not removed.** The `next` and `next-plain`
+profiles still launch with their unchanged recipes, including FR-Spec and the
+C1-only adaptive 4/8 selector, and the FR-Spec recipe keeps its separately
+measured `.97` memory fraction (PR95). They receive no further updates or
+testing; new setups should start on the DFlash2 profile.
 
 ## KV pool sizing is automatic
 
 The launch recipes no longer request a preset KV-token cap (PR86). SGLang
 sizes the shared pool from the GPU memory it profiles at boot, inside the
-recipe's static memory fraction, and reports the resolved number in the
-startup output. An explicit `MAX_TOTAL_TOKENS` remains available as a
-deliberate positive, page-64-aligned cap on every profile. Startup summaries
-say which of the two paths produced the number you are reading.
+recipe's static memory fraction, and reports the resolved number in the startup
+output; the 3.1 Flash-Next candidate boot resolved a 1,210,944-token pool this
+way. An explicit `MAX_TOTAL_TOKENS` remains available as a deliberate,
+page-aligned positive cap on every profile, and startup summaries say which of
+the two paths produced the number you are reading.
 
-## Bounded draft cache, ordinary host cache
+## Fixes
 
-Draft GPU KV allocation is now bounded to what the draft's sliding window
-actually requires (PR91) and no longer takes host HiCache capacity with it
-(PR92), so the qualified 32 GB (Flash-Next) and 96 GB (27B) host-cache
-behaviour is preserved while the draft keeps its own small pool. Scheduler
-admission accounting was corrected in two places: finished requests are dropped
-from the running batch before every admission (PR87) and a request's held
-`req_to_token` row is counted once (PR88). Stop-regex matches inside accepted
-speculative blocks are honoured again (PR96), and mixing token-probability
-requests with ordinary generation no longer triggers the identified scheduler
-crash (PR97).
+- Finished requests are dropped from the running batch before every admission,
+  and a request's held `req_to_token` row is counted once (PR87, PR88), so
+  admission decisions match the batch that is actually running.
+- Stop-regex matches inside accepted speculative blocks are honoured on both
+  DFlash2 block sizes (PR96).
+- Mixing token-probability requests with ordinary generation no longer
+  triggers the identified scheduler crash (PR97).
+- The incorrect `tp_size > 1` rejection is removed from the DFlash2 capture
+  path (PR89): ordinary TP2 already produces complete replicated
+  hyper-connection state at the capture point. TP2 is expected to work; it has
+  not been tested on two-GPU hardware. The launcher still refuses a TP size the
+  visible GPUs cannot serve, and a sidecar preprocessing GPU stays outside the
+  TP pair.
+- The agreed upstream-fix subset (PR79) lands QSA cache-restore ordering and
+  packed-scratch initialization, the shared Chat/Responses `chat_template`
+  trust gate, absent `tool_calls` fields, stable stream timestamps, 400
+  responses for truncated or corrupt images, collection before KV sizing,
+  `ignore_eos` token reservation, and freed-response-state handling.
+- The optional Swift FP8 PLE transplant/verification recipe (PR76) validates
+  the whole safetensors data section, table widths, scales and payload layout
+  before staging anything; its serving qualification remains contributor-owned.
 
-## Native MTP is deprecated, not removed
+## Current results
 
-The two Flash-Next native-MTP profiles (`next`, `next-plain`) still launch
-with their existing recipes, including FR-Spec and the C1-only adaptive 4/8
-selector, and the FR-Spec recipe keeps its separately measured `.97` memory
-fraction (PR95). They are now deprecated: they receive no further updates or
-testing. New setups should start on the DFlash2 profile.
-
-## TP2
-
-The DFlash2 capture path previously rejected `tp_size > 1` outright, which was
-wrong: ordinary TP2 already produces complete replicated hyper-connection
-state at the capture point (PR89). TP2 is expected to work; it has not been
-tested on two-GPU hardware. The launcher still refuses a TP size the visible
-GPUs cannot serve, and a sidecar preprocessing GPU stays outside the TP pair.
-
-## Also included
-
-The agreed upstream-fix subset (PR79) lands QSA cache-restore ordering and
-packed-scratch initialization, the shared Chat/Responses `chat_template` trust
-gate, absent `tool_calls` fields, stable stream timestamps, 400 responses for
-truncated or corrupt images, collection before KV sizing, `ignore_eos` token
-reservation, and freed-response-state handling. The optional Swift FP8 PLE
-transplant and verification recipe (PR76) validates the whole safetensors data
-section, table widths, scales, and payload layout before staging anything; its
-serving qualification remains contributor-owned.
-
-## Measured on one RTX PRO 6000
-
-Native generation rates, mean and sampled peak, reasoning included, on a
-single-card TP1 boot; the 3.0-era W4 screens keep their W4 labels and the
-completed workflows below ran the routed block-6 width at C1. Full conditions
-are in [RESULTS.md](RESULTS.md#penny-royal-31).
+Native generation rates — mean and sampled peak over complete active-decode
+intervals, reasoning included — on one RTX PRO 6000 at TP1, normal non-greedy
+sampling. Full conditions and source labels are in
+[RESULTS.md](RESULTS.md#penny-royal-31).
 
 | Profile / workload | Mean tok/s | Sampled peak tok/s |
 |---|---:|---:|
-| Flash-Next DFlash2 — presentation workflow, C1 W6 (final source) | **194.56** | **421.35** |
-| Flash-Next — coding workflow, C1 W6 | 235.60 | 417.50 |
-| Flash-Next — single request, W4 | 214.18 | 306.44 |
-| Flash-Next — full six-request batch, aggregate, W4 | 566.14 | 657.52 |
-| Flash-Next — reasoning request, W4 | 210.24 | 300.79 |
-| 27B DFlash2 — single request, fixed W8 | 133.06 | 232.07 |
-| 27B DFlash2 — full four-request batch, aggregate | 459.74 | 570.73 |
-| 27B DFlash2 — reasoning request, fixed W8 | 125.88 | 215.93 |
+| Flash-Next DFlash2 — presentation workflow, C1 W6 (final candidate source `a60f442`) | **194.56** | **421.35** |
+| Flash-Next — coding flow, C1 W6 (`5ca3f39`) | 235.60 | 417.50 |
+| Flash-Next — single request, W4 (`5ca3f39`) | 214.18 | 306.44 |
+| Flash-Next — full six-request batch, aggregate, W4 (`5ca3f39`) | 566.14 | 657.52 |
+| Flash-Next — reasoning request, W4 (earlier `27f9eaa`) | 210.24 | 300.79 |
+| 27B DFlash2 — single request, fixed W8 (`27f9eaa`) | 133.06 | 232.07 |
+| 27B DFlash2 — full four-request batch, aggregate (`27f9eaa`) | 459.74 | 570.73 |
+| 27B DFlash2 — reasoning request, fixed W8 (`27f9eaa`) | 125.88 | 215.93 |
 
 | Cold prompt | Flash-Next prefill tok/s | 27B prefill tok/s |
 |---|---:|---:|
 | 63,906 tokens | 15,365.38 | 6,421.59 |
 | 489,921 tokens | 8,715.05 | 1,677.10 |
 
-Both profiles completed the recorded reasoning, tool, vision, long-context,
-and RAM/NIXL restore checks. Current reasoning-suite scores are 93.46
-(Flash-Next) and 96.94 (27B) on actual answer grading; the suites are not
-presented as perfect, and recorded model and tool deviations are listed in
-[RESULTS.md](RESULTS.md#penny-royal-31).
+Both profiles completed the recorded reasoning, tool, vision, long-context and
+RAM/NIXL restore checks on the qualified sources. The presentation workflow ran
+end to end at block 6: 121 model turns, all matched one-to-one against the
+retained timestamps, 192,349 output tokens including reasoning, prompt growth
+42,637 to 253,267 tokens. Reasoning-suite scores: 93.46/100 (Flash-Next) and
+96.94/100 (27B) on actual answer grading; recorded deviations are listed with
+the measurements.
 
 ## Updating
 
@@ -116,16 +112,17 @@ Native: follow [BUILD.md](BUILD.md#update-an-existing-install) with
 `RELEASE_REF='pennyroyal-v3.1.0'` once the tag is published. Container:
 download the release's launch-file set and run
 `ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0` with the matching startup files,
-per the [container guide](docker/pennyroyal/README.md). If an explicit
-`PENNYROYAL_IMAGE=` or `IMAGE=` pin names an older image, update or delete it
-to move to the new default; your saved settings, model folders, and persistent
-caches stay as they are, and no blanket cache deletion or weight re-download
-is required — except that the Flash-Next DFlash2 profile needs the new
-`incoai/Qwen3.8-Flash-Next-DFlash2` draft download. Regenerate setup files
-with the 3.1 configurator, or edit the 3.1 samples; every save writes new
-timestamped files and preserves existing ones. The complete settings list,
-defaults, interactions, and restart/cache effects are in
-[CONFIGURATION.md](CONFIGURATION.md).
+per the [container guide](docker/pennyroyal/README.md). Update any explicit
+image pin — `PENNYROYAL_IMAGE=` in saved setup settings or the Compose `.env`,
+or the `IMAGE=` value in an edited `run.sh` (keep the assignment; the script
+runs under `set -u`) — to `v3.1.0`, or pass `--image`. Existing target weights
+are unchanged; the Flash-Next DFlash2 profile needs the new
+`incoai/Qwen3.8-Flash-Next-DFlash2` draft download. Your saved settings, model
+folders and persistent caches stay as they are, and no blanket cache deletion
+is required. Regenerate setup files with the 3.1 configurator or edit the 3.1
+samples; every save writes new timestamped files and preserves existing ones.
+The complete settings list, defaults, interactions and restart/cache effects
+are in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## Thanks
 
@@ -134,10 +131,9 @@ defaults, interactions, and restart/cache effects are in
   contributors to this release.
 - **[Penny Royal](mailto:Pennyroyal@agentmail.to)** did almost all of the
   coding, including the ports and integration work.
-- **[John](https://github.com/jpezzulli)** worked through the architecture,
-  source investigation, tuning, and debugging together with Penny — including
-  the width-routing decision and the memory-fraction measurements — not just
-  the direction.
+- [John](https://github.com/jpezzulli), Penny and Codex worked through the
+  architecture, tuning and debugging together — including the width-routing
+  decision and the memory-fraction measurements.
 
 The machine-readable record, including source identities and validation scope,
 is [release-3.1.json](release-3.1.json).

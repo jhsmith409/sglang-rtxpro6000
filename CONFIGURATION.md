@@ -53,14 +53,14 @@ server.
 | TP | 1 default; 2 accepted | 1 (pinned) | 1 default; 2 accepted | 1 default; 2 accepted |
 | PLE placement | `ram` or `nvme` | `ram` only | `ram` or `nvme` | `ram` or `nvme` |
 
-The Flash-Next DFlash2 verify width is a policy lookup on the active batch
-size (`configs/pennyroyal/adaptive-dflash2.json`), not an acceptance-driven
-tuner and not a knob: there is one candidate width per tier, and the launch
-carries the widest routed block (`--speculative-num-steps 5
---speculative-num-draft-tokens 6`), so the deprecated
-`SPECULATIVE_NUM_DRAFT_TOKENS` setting is refused on this profile rather than
-silently ignored. The routed profile also keeps a batch-1 decode graph bucket
-and runs with `--disable-prefill-cuda-graph`.
+The Flash-Next DFlash2 verify width is fixed by active concurrency through the
+bundled policy file `configs/pennyroyal/adaptive-dflash2.json`: one candidate
+width per tier, and the launch carries the widest routed block
+(`--speculative-num-steps 5 --speculative-num-draft-tokens 6`). The 3.0-era
+`SPECULATIVE_NUM_DRAFT_TOKENS` setting therefore does not exist on this
+profile — setup names it as unavailable rather than forwarding a value the
+policy would ignore. The routed profile also keeps a batch-1 decode graph
+bucket and runs with `--disable-prefill-cuda-graph`.
 
 ## Models, paths and identity
 
@@ -127,7 +127,7 @@ and runs with `--disable-prefill-cuda-graph`.
 
 | Setting | Default | Notes |
 |---|---|---|
-| `PENNYROYAL_IMAGE` / `--image` | `ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0` (planned tag) | An explicit pin survives every later setup save — update or delete it to move to the new release. Startup files belong to their release's image. |
+| `PENNYROYAL_IMAGE` / `--image` | `ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0` (planned tag) | An explicit pin survives every later setup save: update it to the new tag to upgrade (in an edited `run.sh`, keep the `IMAGE=` assignment — the script runs under `set -u`; in saved setup settings or the Compose `.env` you may instead delete the line to follow the launcher default). Startup files belong to their release's image. |
 | `PENNYROYAL_PORT` / `--port` | 8001 | Published API port. |
 | `PENNYROYAL_USER` / `--user`, `USER_ID`/`GROUP_ID` | `1000:1000` | Numeric identity that must own the writable cache mounts. |
 | `PENNYROYAL_STARTUP` / `--startup` | `config/start-flash-next-dflash2.sh` | Selected host startup file; the whole directory is mounted read-only at `/config`. |

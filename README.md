@@ -63,36 +63,15 @@ how the state is stored and restored.
 
 Flash-Next gets **DFlash2 with FR-Spec** and its own draft model,
 `incoai/Qwen3.8-Flash-Next-DFlash2`, and that profile is the default for new
-setups. The draft block is **routed by active batch size** — block 6 for a
-single running request, block 4 for two or more — a fixed lookup, not
-acceptance-based tuning. The **KV pool is sized automatically** from profiled
-memory instead of a preset cap; an explicit `MAX_TOTAL_TOKENS` remains
-available. The native NEXTN MTP recipes still launch but are **deprecated**:
-no further updates or testing. Scheduler admission, stop-regex inside
-speculative blocks, mixed-probability requests and the DFlash2 TP2 capture
-path are fixed. See the [3.1 release notes](RELEASE_NOTES_3.1.md) for the
-full change list and the [configuration reference](CONFIGURATION.md) for
-every supported setting.
-
-## What 3.0 introduced
-
-Flash-Next got adaptive MTP at **C=1**, automatic FP8 and small-batch kernels,
-and more room for cached tokens. There were also fixes for session state, agent
-API responses, image requests, and interrupted builds.
-
-**Container configuration now lives on your host.** Edit your startup file,
-model paths and mounts, then run the downloaded image. Updating the image does
-not replace your configuration.
-
-**The release went on a diet.** We kept RTX Blackwell for inference and
-Ampere/Ada Lovelace for image-processing sidecars, and trimmed the other GPU
-build targets. The result is a slimmer release for easier downloads. CPU image
-processing remains available.
-
-**Penny Royal did almost all the coding for this release.** John, Penny and
-Codex worked through the architecture, tuning and debugging together, down to
-fused kernels, memory layouts and milliseconds per decode cycle.
-See the [3.0 release notes](RELEASE_NOTES_3.0.md) for that release's full change list.
+setups. The draft block is **fixed by active concurrency** — block 6 for a
+single running request, block 4 for two or more. The **KV pool is sized
+automatically** from profiled memory instead of a preset cap; an explicit
+`MAX_TOTAL_TOKENS` remains available. The native NEXTN MTP recipes still
+launch but are **deprecated**: no further updates or testing. Scheduler
+admission, stop-regex inside speculative blocks, mixed-probability requests
+and the DFlash2 TP2 capture path are fixed. See the
+[3.1 release notes](RELEASE_NOTES_3.1.md) for the full change list and the
+[configuration reference](CONFIGURATION.md) for every supported setting.
 
 <a id="models-and-launch-recipes"></a>
 <a id="qualified-model-profiles-and-launch-recipes"></a>
@@ -116,7 +95,7 @@ shared across active requests and cached prefixes.
 
 The Flash-Next DFlash2 profile pairs the NVFP4 target with the separate
 `incoai/Qwen3.8-Flash-Next-DFlash2` draft and FR-Spec. The verification block
-follows the active batch size, read from the bundled policy file
+is fixed by active concurrency, read from the bundled policy file
 `configs/pennyroyal/adaptive-dflash2.json`:
 
 | Requests generating together | Draft behavior |
@@ -124,11 +103,10 @@ follows the active batch size, read from the bundled policy file
 | **C=1** | Fixed six-token blocks. |
 | **C=2 or more** | Fixed four-token blocks; speculative decoding stays on. |
 
-One candidate width per tier means this is concurrency routing, not
-acceptance-based tuning: the width is a lookup and acceptance feedback cannot
-move it. A single request gets the wider draft without making every request in
-a busy batch pay that extra draft work. **C is request concurrency; TP is the
-number of inference GPUs.**
+One candidate width per tier means the width is a lookup, so it is identical
+between boots, and a single request gets the wider draft without making every
+request in a busy batch pay that extra draft work. **C is request concurrency;
+TP is the number of inference GPUs.**
 
 **FR-Spec rides along at every concurrency.** FR-Spec narrows the vocabulary
 searched by the draft head; routing selects how many tokens it drafts. The
@@ -149,7 +127,7 @@ For 27B alternatives, see the [Swift 27B results](SWIFT-27B.md) and the
 
 ### Flash-Next 3.1
 
-**Presentation workflow: 194.56 tok/s mean, 421.35 peak (C1, block 6). Coding workflow: 235.60 mean, 417.50 peak (C1, block 6).**
+**Presentation workflow: 194.56 tok/s mean, 421.35 peak (C1, block 6). Coding flow: 235.60 mean, 417.50 peak (C1, block 6).**
 
 Measured on one RTX PRO 6000 Blackwell, using our OrcaRouter ModelOpt NVFP4
 checkpoint, FR-Spec with DFlash2, a 524K context limit, and normal non-greedy
@@ -159,16 +137,15 @@ other rows keep the source and width of the screen that recorded them.
 | Workload | Mean tok/s | Sampled peak tok/s |
 |---|---:|---:|
 | Presentation workflow, C1 W6 (final candidate source) | **194.56** | **421.35** |
-| Real coding workflow, C1 W6 | **235.60** | **417.50** |
+| Coding flow, C1 W6 | **235.60** | **417.50** |
 | Single request, fixed W4 | 214.18 | 306.44 |
 | Six concurrent requests, aggregate, fixed W4 | 566.14 | 657.52 |
 | Reasoning request, C1 W4 | 210.24 | 300.79 |
 
 These are **SGLang's native generation rates**, including reasoning. Prefill,
-tool execution, and idle time are separate. The presentation ran 121 model
-turns and 192,349 output tokens at block 6 with one request generating; the
-concurrency row averages the full six-request batch, not the speed of each
-request. [Current results](RESULTS.md#penny-royal-31) records the sources,
+tool execution, and idle time are separate. The presentation completed end to
+end: 121 model turns and 192,349 output tokens at block 6 with one request
+generating. [Current results](RESULTS.md#penny-royal-31) records the sources,
 intervals and settings behind every number.
 
 | Cold prompt | Mean prefill tok/s |
@@ -179,30 +156,6 @@ intervals and settings behind every number.
 The reasoning suite scored **93.46/100** on the qualified source, graded on
 actual answers. See [results and measurement settings](RESULTS.md#penny-royal-31)
 for the tool checks, cache restore, sampling details, and earlier results.
-
-### Recorded history: 3.0 and 2.5.3
-
-The October 10 3.0 screen recorded 262.32 mean / 518.18 peak on its real
-coding workflow and 218.63 / 326.56 on a regular C1 request with FR-Spec plus
-adaptive MTP. Against the saved 2.5.3 native regular-C1 mean of 186.79 tok/s,
-that release configuration measured **+17.0%**, and the C6 GPU token pool grew
-2.7%, from 1,039,040 to 1,067,072 tokens. Those runs used each release's
-recorded settings: medium reasoning in the October 6 baseline and xhigh in the
-October 10 run. [Comparison details](RESULTS.md#recorded-comparison-with-253)
-keep the sampling and source records together.
-
-### The public code-edit benchmark (3.0 record)
-
-For comparison with the token-maxxing results, we also ran the public
-**code-edit prompt**: **491.88 tok/s mean and 574.16 sampled peak** in the
-accepted 3.0 adaptive screen, using normal non-greedy sampling. The saved 2.5.3
-code-edit set averaged **336.57 tok/s** with greedy sampling.
-
-This workload asks for a mechanical rewrite of supplied code. Its predictable
-output is well suited to wider speculation. The **real coding workflow** numbers
-above are a separate task with tool calls, implementation and tests.
-[Code-edit details](RESULTS.md#public-code-edit-benchmark)
-identify the prompt, output limit and measured configuration.
 
 <a id="27b-fp8--dflash2-performance-at-a-glance"></a>
 
@@ -222,8 +175,10 @@ Current recorded performance on one RTX PRO 6000, fixed block 8:
 | 489,921 tokens | 1,677.10 |
 
 The reasoning suite scored **96.94/100** on this profile.
-[Benchmark history](RESULTS.md) keeps these and the dated September 10 and
-August 24 measurements with their original timing methods.
+
+[Benchmark history](RESULTS.md) keeps the earlier records — the October 10 3.0
+screens, the 2.5.3 comparison, the public code-edit benchmark, and the dated
+27B campaigns — with their original labels and timing methods.
 
 <a id="independent-tp2-fp8-validation"></a>
 
@@ -267,7 +222,10 @@ commands; the beta configurator can generate the same ordinary files for you.
 
 The inference target is **RTX PRO 6000 Blackwell, TP1 or TP2**. An Ampere or
 Ada Lovelace GPU can be used separately for image preprocessing; it is not an
-extra tensor-parallel inference card. CPU preprocessing is also available.
+extra tensor-parallel inference card. CPU preprocessing is also available. The
+build is narrowed to RTX Blackwell inference and Ampere/Ada sidecar image
+processing — other GPU build targets are trimmed, which keeps the release
+slimmer and easier to download.
 
 | Profile | Default host cache | Additional model-related host memory |
 |---|---|---|

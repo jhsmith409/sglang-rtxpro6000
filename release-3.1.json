@@ -5,7 +5,7 @@
     "publication_approved": false,
     "source_publication": "pending",
     "container": "pending",
-    "note": "Local integration and documentation are complete on the exact integrated source; the public merge, immutable tag, image build and digest remain pending until actually performed."
+    "note": "Draft release notes. Most runtime PRs are merged to public main; the Flash-Next setup candidate (PR94) awaits mechanical CI follow-ups. Tag, image build and digest are recorded on the GitHub release when publication completes."
   },
   "source": {
     "base_release": "pennyroyal-v3.0.2",
@@ -32,7 +32,7 @@
     {
       "id": "fixed_width_routing",
       "pr": 100,
-      "summary": "Verify width is routed per active batch size by the bundled fixed policy (block 6 at one running request, block 4 at two or more) instead of acceptance-driven adaptation; proposal-probability scratch is keyed by width and routing stays valid when a width captures nothing. Concurrency routing, not acceptance-based tuning; the 3.0-era SPECULATIVE_NUM_DRAFT_TOKENS setting is refused on this profile.",
+      "summary": "Verify width is fixed by active concurrency through the bundled fixed policy: block 6 at one running request, block 4 at two or more; one candidate per tier keeps the width stable between boots. Proposal-probability scratch is keyed by width and routing stays valid when a width captures nothing. The 3.0-era SPECULATIVE_NUM_DRAFT_TOKENS setting is retired on this profile.",
       "profiles": ["Flash-Next DFlash2"]
     },
     {
@@ -131,12 +131,14 @@
     "hicache_default_gb": {"next_profiles": 32, "27b": 96},
     "nixl_default": "on",
     "model_weights_changed": false,
+    "target_model_weights": "unchanged for both profiles",
+    "new_draft_download": "incoai/Qwen3.8-Flash-Next-DFlash2 for the Flash-Next DFlash2 profile",
     "precision_changed": false,
     "dependencies_changed": false,
     "diagnostics_enabled": false
   },
   "validation": {
-    "policy": "Reuse of completed qualification; no new model validation, hardware acquisition, or broad test campaign accompanies this documentation change.",
+    "policy": "Reuse of completed qualification; the dated scopes below were recorded on the qualified sources.",
     "reviewed_runtime_source": "a60f4428f7aae4fd843cfb6f7cbda94d0aee7b82 (TP1, RTX PRO 6000)",
     "tp2_capture_correction_review": "PR89 at f0e46ecc49: four new capture cases failed on the TP ban at base c1e66cd850 and pass with the correction; 21 focused capture tests pass; pinned local lint, GitHub lint and an independent review pass.",
     "routing_gate": "Three source reviews, 139 focused checks plus 24 subtests, pinned lint, two C1->C2->C1->C6->C1 live cycles with eight switches and 122 correctly routed CUDA-graph decode samples, followed by normal-answer/tool checks.",
@@ -144,7 +146,7 @@
     "both_profiles": {
       "reasoning_tools_vision_long_context_ram_nixl_restore": "completed recorded checks on the qualified sources",
       "reasoning_scores": {"flash_next": "93.46/100", "27b": "96.94/100"},
-      "grading": "Actual answer grading; extended or repetitive reasoning is not penalized; ask_user is a valid tool choice; suites are reported, not presented as perfect."
+      "grading": "Actual answer grading; extended or repetitive reasoning is not penalized; ask_user is a valid tool choice."
     }
   },
   "performance": {
@@ -163,7 +165,8 @@
       "prompt_489921": {"flash_next": 8715.05, "27b": 1677.10}
     },
     "presentation_detail": "Real five-slide workflow on final source a60f442 at C1 W6: 121 model turns matched 121 server requests, 1,676 complete decode intervals over 909.385 s, 192,349 server output tokens including reasoning, prompt growth 42,637 to 253,267 tokens; total workflow time including tools and rendering was 33 minutes 25 seconds.",
-    "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak from the same window, including reasoning; normal non-greedy sampling. Rows keep their recorded source/configuration labels: 5ca3f39 for the FR-Spec fixed-W4 normal/full-C6 and W6 coding-flow screens, earlier 27f9eaa for the W4 reasoning and 27B fixed-W8 screens, and a60f442 for the presentation. C4/C6 rows are aggregate over the full running batch, not per-request rates. The corrected full-batch means supersede the earlier drain-inclusive 522.69/386.26 summaries. The internal synthetic code-edit width screen is intentionally not published.",
+    "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak from the same window, including reasoning; normal non-greedy sampling. Rows keep their recorded source/configuration labels: 5ca3f39 for the FR-Spec fixed-W4 normal/full-C6 and W6 coding-flow screens, earlier 27f9eaa for the W4 reasoning and 27B fixed-W8 screens, and a60f442 for the presentation. C4/C6 rows are aggregate over the full running batch, not per-request rates. The corrected full-batch means supersede the earlier drain-inclusive 522.69/386.26 summaries. The coding-flow timing was accepted explicitly; its final handoff record was not retained, so that task's completion fact is recorded separately from the measurement.",
+    "completion_facts": "The presentation workflow completed end to end on a60f442 with all 121 turns matched one-to-one; the coding-flow completion fact is recorded in the qualification notes, separate from its accepted timing.",
     "hardware_note": "All local numbers are one RTX PRO 6000 at TP1; TP2 is expected to work and has not been tested on two-GPU hardware."
   },
   "upgrade": {
@@ -189,7 +192,7 @@
     {
       "name": "Penny Royal",
       "email": "Pennyroyal@agentmail.to",
-      "contribution": "Implementation, ports and integration; architecture, source investigation, tuning and debugging collaboration with John"
+      "contribution": "Implementation, ports and integration; John, Penny and Codex worked through the architecture, tuning and debugging together, including the width-routing decision and the memory-fraction measurements"
     }
   ],
   "remaining": [

@@ -55,14 +55,15 @@ was one natural xhigh workflow. The earlier recorded presentation averaged
 | Presentation workflow, C1 W6 | 194.56 | 421.35 | `a60f442`, DFlash2 + FR-Spec, routed W6 |
 | Coding flow, C1 W6 | 235.60 | 417.50 | `5ca3f39`, FR-Spec W6 |
 | Regular C1 | 214.18 | 306.44 | `5ca3f39`, FR-Spec fixed W4 |
-| Regular reasoning C1 | 210.24 | 300.79 | earlier `27f9eaa`, DFlash2 W4 |
+| Reasoning C1 | 210.24 | 300.79 | earlier `27f9eaa`, DFlash2 W4 |
 | Full six-request C6, aggregate | 566.14 | 657.52 | `5ca3f39`, FR-Spec W4, 15 full-C6 intervals |
 
-The earlier FR-Spec W4 rows keep their W4 labels: the W6 screen and the
-fixed-W4 screens are different measured widths, not one setting. The corrected
-full-C6 mean supersedes the earlier drain-inclusive 522.69 tok/s summary. The
-six-request figure is the aggregate over the whole running batch, not the rate
-of each request.
+All rows are 3.1-candidate sources; the W4 screens keep their W4 labels. The
+coding-flow row is the accepted W6 timing for that tool workflow; its final
+handoff record was not retained, so the task's completion fact is listed
+separately from the measurement above. The corrected full-C6 mean supersedes
+the earlier drain-inclusive 522.69 tok/s summary. The six-request figure is
+the aggregate over the whole running batch, not the rate of each request.
 
 ### Cold prefill
 
@@ -90,21 +91,18 @@ tool, vision, long-context, and RAM/NIXL restore checks on the qualified
 sources. Current reasoning-suite scores are 93.46/100 (Flash-Next) and
 96.94/100 (27B), graded on actual answers; extended or repetitive reasoning
 is not penalized, and `ask_user` is treated as a valid tool choice. The
-recorded model and tool deviations stand — the suites are reported, not
-presented as perfect. Flash-Next's final candidate boot resolved a
-1,210,944-token shared KV pool with automatic sizing, and the accumulated
-`.95`-fraction evidence includes 49 successful image requests. The routing
-change passed 139 focused checks plus 24 subtests and two live
+recorded model and tool deviations stand. Flash-Next's final candidate boot
+resolved a 1,210,944-token shared KV pool with automatic sizing, and the
+accumulated `.95`-fraction evidence includes 49 successful image requests. The
+routing change passed 139 focused checks plus 24 subtests and two live
 C1→C2→C1→C6→C1 cycles with 122 correctly routed decode samples. The TP2
 capture correction passed 21 focused capture tests with pinned lint and an
-independent review. No new runtime validation accompanies this release
-preparation.
+independent review.
 
 [Machine-readable release record](release-3.1.json) includes the exact source
 identities, settings, and validation scope. Publication of the tag, image, and
 GitHub release is still pending. The 3.0 and earlier entries below remain
-dated history with their original labels and timing methods; this release
-reuses completed qualification rather than rerunning it.
+dated history with their original labels and timing methods.
 
 ## Penny Royal 3.0
 
