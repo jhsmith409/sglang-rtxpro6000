@@ -9,9 +9,18 @@ It is designed for workloads whose accept length changes over time, where one st
 
 ## Current support
 
-- Only `--speculative-algorithm EAGLE` or `EAGLE3`
+- `--speculative-algorithm EAGLE` or `EAGLE3` (acceptance-driven, any number of candidate tiers)
+- `--speculative-algorithm DFLASH`, but as fixed batch-size width routing only: every BS tier must name exactly
+  one `candidate_steps`. A DFLASH draft emits its whole verify block in one forward, so there is no per-step drafting
+  loop for acceptance feedback to shorten; the width a batch runs at is a lookup on its size and the EMA never moves
+  it. A tier with two or more candidates is refused (adaptive disabled with a warning), not silently averaged over.
 - Only `--speculative-eagle-topk 1`
-- If either condition is not met, SGLang falls back to static speculative settings
+- If any of these conditions is not met, SGLang falls back to static speculative settings
+
+For DFLASH the launch always carries the widest routed width (`--speculative-num-steps` / `--speculative-num-draft-tokens`
+are raised to it if lower, and a conflicting `--speculative-dflash-block-size` is refused), because every allocation a
+CUDA graph bakes in is sized once at that maximum and the narrower widths reuse it. See
+`configs/pennyroyal/adaptive-dflash2.json` for a shipped block6-at-C1 / block4-at-C2+ policy.
 
 ## Why adaptive steps help
 

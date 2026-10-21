@@ -223,7 +223,48 @@ def _handle_dflash(server_args: ServerArgs) -> None:
     # RoPE reservation). Force them to 1 to avoid surprising memory behavior.
     #
     # For DFlash, the natural unit is `block_size` (verify window length).
-    if cfg.speculative_num_steps is None:
+    if cfg.speculative_adaptive:
+        # Fixed batch-size width routing: `candidate_steps` are the routed widths
+        # minus one, so the launch must carry the widest of them -- every buffer
+        # a captured graph binds is then provisioned once for that maximum and a
+        # narrower width reuses it. The one-candidate-per-tier rule is enforced
+        # by adaptive_unsupported_reason, which already disabled adaptive (with a
+        # warning) if the table asked for acceptance-driven DFLASH widths.
+        from sglang.srt.speculative.adaptive_spec_params import (
+            dflash_fixed_width_routing,
+        )
+
+        widest_steps = max(
+            dflash_fixed_width_routing(cfg.speculative_adaptive_config).values()
+        )
+        if (
+            cfg.speculative_dflash_block_size is not None
+            and int(cfg.speculative_dflash_block_size) != widest_steps + 1
+        ):
+            raise ValueError(
+                "--speculative-dflash-block-size cannot be combined with "
+                "--speculative-adaptive unless it equals the widest routed width: "
+                f"the policy launches at {widest_steps} steps / "
+                f"{widest_steps + 1} draft tokens, got "
+                f"--speculative-dflash-block-size={cfg.speculative_dflash_block_size}."
+            )
+        if int(cfg.speculative_num_steps or 0) != widest_steps:
+            logger.warning(
+                "DFLASH adaptive width routing launches at the widest routed width; "
+                "overriding speculative_num_steps=%s to %s and "
+                "speculative_num_draft_tokens to %s.",
+                cfg.speculative_num_steps,
+                widest_steps,
+                widest_steps + 1,
+            )
+        declare_resolution(
+            server_args,
+            "_handle_dflash.adaptive",
+            speculative_num_steps=widest_steps,
+            speculative_eagle_topk=1,
+            speculative_num_draft_tokens=widest_steps + 1,
+        )
+    elif cfg.speculative_num_steps is None:
         declare_resolution(
             server_args,
             "_handle_dflash",

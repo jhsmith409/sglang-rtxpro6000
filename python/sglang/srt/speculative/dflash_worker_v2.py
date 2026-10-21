@@ -1,7 +1,9 @@
+import contextlib
 import logging
 import math
-from dataclasses import replace
-from typing import List, Optional, Tuple
+import time
+from dataclasses import dataclass, replace
+from typing import Any, List, Optional, Tuple
 
 import torch
 
@@ -20,6 +22,7 @@ from sglang.srt.configs.hybrid_arch import mambaish_config
 from sglang.srt.distributed import get_tp_group
 from sglang.srt.distributed.parallel_state_wrapper import ParallelState
 from sglang.srt.environ import envs
+from sglang.srt.hardware_backend.npu.graph_runner.npu_graph_runner import NPUGraphRunner
 from sglang.srt.layers.logits_processor import should_apply_lm_head_quant_method
 from sglang.srt.layers.logprob_processor import compute_spec_logprobs
 from sglang.srt.lora.layers import unwrap_lora_layer
@@ -27,20 +30,39 @@ from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.managers.scheduler import GenerationBatchResult
 from sglang.srt.managers.tp_worker import TpModelWorker
 from sglang.srt.mem_cache.allocator.swa import SWATokenToKVPoolAllocator
-from sglang.srt.model_executor.cuda_graph_config import Backend
+from sglang.srt.model_executor.cuda_graph_config import (
+    Backend,
+    Phase,
+    check_cuda_graph_backend,
+    scoped_capture_cuda_graph_config,
+    set_adaptive_launch_capture_scope,
+)
 from sglang.srt.model_executor.forward_batch_info import (
     CaptureHiddenMode,
     ForwardBatch,
     ForwardMode,
     compute_position,
 )
+from sglang.srt.model_executor.input_buffers import set_private_input_buffers
+from sglang.srt.model_executor.model_runner_components.cuda_graph_setup import (
+    capture_decode_graph,
+)
+from sglang.srt.model_executor.runner.decode_cuda_graph_runner import (
+    DecodeCudaGraphRunner,
+)
 from sglang.srt.runtime_context import (
+    get_context,
     get_exec,
     get_schedule,
     get_spec,
     mamba_track_grid,
 )
 from sglang.srt.server_args import ServerArgs
+from sglang.srt.speculative.adaptive_runtime_state import (
+    AdaptiveController,
+    SpecRuntimeState,
+    adaptive_target_graph_warmup,
+)
 from sglang.srt.speculative.base_spec_worker import BaseSpecWorker
 from sglang.srt.speculative.dflash_info import DFlashVerifyInput
 from sglang.srt.speculative.dflash_info_v2 import DFlashDraftInputV2
@@ -79,6 +101,7 @@ from sglang.srt.utils import (
     is_hip,
     is_npu,
     is_pin_memory_available,
+    log_info_on_rank0,
 )
 
 _is_npu = is_npu()
@@ -278,6 +301,100 @@ class _SelectorDraftSampler:
         self.q_out[:bs].copy_(q_rows)
 
 
+@dataclass
+class DFlashWidthState:
+    """Every DFLASH resource bound to one verify block width.
+
+    A DFLASH draft emits its whole block in a single forward, so the width is
+    baked into more than a scalar: the checkpoint's grouped convolutions index
+    by ``block_size``, the position offsets and verify spec metadata carry the
+    block length, the folded draft sampler's static outputs are written by that
+    width's captured graph, and the block scratch must be row-major
+    ``[cap, block_size]`` (the Triton prepare/accept kernels reject a
+    ``[:, :block_size]`` view of a wider buffer, and the pre-existing guards
+    only compared batch capacity -- so updating the scalar width alone let a
+    wide buffer feed a narrow round).
+
+    One instance per reachable width, provisioned at startup and reused: a
+    transition swaps these references, never reallocs or recaptures.
+    """
+
+    block_size: int
+    pos_offsets: torch.Tensor
+    spec_info: DFlashVerifyInput
+    draft_sampler: Optional[Any] = None
+    scratch_cap: int = 0
+    ids: Optional[torch.Tensor] = None  # [cap, block_size]
+    positions: Optional[torch.Tensor] = None  # [cap, block_size]
+    tokens: Optional[torch.Tensor] = None  # [cap, block_size]
+    cache_loc: Optional[torch.Tensor] = None  # [cap, block_size]
+    block_end: Optional[torch.Tensor] = None  # [cap]
+    seq_lens_cpu: Optional[torch.Tensor] = None  # [cap] on CPU
+    bonus_cap: int = 0
+    bonus_slot: int = 0
+    accept_len: Optional[torch.Tensor] = None
+    commit_lens: tuple = ()
+    bonus_ids: tuple = ()
+    out_tokens: tuple = ()
+    new_seq_lens: tuple = ()
+
+    def ensure_scratch(self, bs: int, device) -> None:
+        """Grow the block scratch capacity; the width itself never changes."""
+        if self.scratch_cap >= int(bs):
+            return
+        new_cap = max(
+            int(bs), self.scratch_cap * 2 if self.scratch_cap > 0 else int(bs)
+        )
+        width = self.block_size
+        self.ids = torch.empty((new_cap, width), dtype=torch.long, device=device)
+        self.positions = torch.empty((new_cap, width), dtype=torch.int64, device=device)
+        self.tokens = torch.empty((new_cap, width), dtype=torch.long, device=device)
+        self.cache_loc = torch.empty((new_cap, width), dtype=torch.int64, device=device)
+        self.block_end = torch.empty((new_cap,), dtype=torch.int32, device=device)
+        self.seq_lens_cpu = torch.empty((new_cap,), dtype=torch.int32, device="cpu")
+        self.scratch_cap = new_cap
+
+    def ensure_bonus(self, bs: int, device) -> None:
+        if self.bonus_cap >= int(bs):
+            return
+        new_cap = max(int(bs), self.bonus_cap * 2 if self.bonus_cap > 0 else int(bs))
+        self.accept_len = torch.empty((new_cap,), dtype=torch.int32, device=device)
+        self.commit_lens = tuple(
+            torch.empty((new_cap,), dtype=torch.int32, device=device) for _ in range(2)
+        )
+        # int64 keeps the downstream .to(torch.int64) a no-op.
+        self.bonus_ids = tuple(
+            torch.empty((new_cap,), dtype=torch.int64, device=device) for _ in range(2)
+        )
+        self.out_tokens = tuple(
+            torch.empty((new_cap, self.block_size), dtype=torch.int64, device=device)
+            for _ in range(2)
+        )
+        self.new_seq_lens = tuple(
+            torch.empty((new_cap,), dtype=torch.int64, device=device) for _ in range(2)
+        )
+        self.bonus_cap = new_cap
+
+    def next_bonus(self, bs: int) -> tuple:
+        slot = self.bonus_slot
+        self.bonus_slot = (slot + 1) % 2
+        return (
+            self.accept_len[:bs],
+            self.commit_lens[slot][:bs],
+            self.bonus_ids[slot][:bs],
+            self.out_tokens[slot][:bs],
+            self.new_seq_lens[slot][:bs],
+        )
+
+
+@dataclass
+class DFlashRuntimeState(SpecRuntimeState):
+    """A prepared DFLASH width: the shared stage resources plus this width's
+    ``DFlashWidthState``. ``speculative_num_draft_tokens`` IS the block size."""
+
+    width_state: DFlashWidthState = None  # type: ignore[assignment]
+
+
 class DFlashWorkerV2(BaseSpecWorker):
     """DFLASH speculative decoding worker (spec-v2).
 
@@ -377,25 +494,24 @@ class DFlashWorkerV2(BaseSpecWorker):
                 self._noise_embed_scale,
             )
 
-        self._block_pos_offsets = build_block_pos_offsets(
-            length=self.block_size, device=self.device
-        )
-        self._draft_block_ids_buf: Optional[torch.Tensor] = None  # [cap_bs, block_size]
-        self._draft_block_positions_buf: Optional[torch.Tensor] = (
-            None  # [cap_bs, block_size]
-        )
-        self._draft_block_tokens_buf: Optional[torch.Tensor] = (
-            None  # [cap_bs, block_size]
-        )
-        self._draft_verify_out_cache_loc_buf: Optional[torch.Tensor] = (
-            None  # [cap_bs, block_size]
-        )
-        self._draft_block_end_buf: Optional[torch.Tensor] = None  # [cap_bs]
+        # Width-bound resources are keyed by block size rather than held as
+        # loose scalars: under fixed concurrency routing a batch may switch
+        # widths between rounds, and the launch width's set is only one of them
+        # (the rest are built in init_cuda_graphs). The live attributes below are
+        # the active width's, repointed together by _apply_width_state.
+        self.adaptive_controller: Optional[AdaptiveController] = None
+        self._dflash_widths: dict[int, DFlashWidthState] = {}
+        self._active_width: Optional[DFlashWidthState] = None
         self._selector_sample: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        self._draft_block_ids_buf: Optional[torch.Tensor] = None  # [cap_bs, block_size]
+        self._draft_block_positions_buf: Optional[torch.Tensor] = None
+        self._draft_block_tokens_buf: Optional[torch.Tensor] = None
+        self._draft_verify_out_cache_loc_buf: Optional[torch.Tensor] = None
+        self._draft_block_end_buf: Optional[torch.Tensor] = None  # [cap_bs]
         self._draft_seq_lens_cpu_buf: Optional[torch.Tensor] = None  # [cap_bs] on CPU
-        self._draft_block_spec_info = make_draft_block_spec_info(
-            draft_token_num=int(self.block_size), device=self.device
-        )
+        self._block_pos_offsets: Optional[torch.Tensor] = None
+        self._draft_block_spec_info: Optional[DFlashVerifyInput] = None
+        self._apply_width_state(self._dflash_width(self.block_size))
         self._draft_greedy_gathered_max_buf: Optional[torch.Tensor] = None
         self._draft_greedy_gathered_ids_buf: Optional[torch.Tensor] = None
         self._draft_greedy_gather_cap: int = 0
@@ -418,13 +534,16 @@ class DFlashWorkerV2(BaseSpecWorker):
         # gather's implicit nonzero D2H + lengths.max().item()); keep it only
         # for platforms without GPU triton.
         self._use_triton_compact_rebuild = supports_gpu_triton
-        self._accept_bonus_buffer_cap: int = 0
-        self._accept_bonus_buffer_slot: int = 0
-        self._accept_len_buf: Optional[torch.Tensor] = None
-        self._commit_lens_bufs: List[torch.Tensor] = []
-        self._bonus_id_bufs: List[torch.Tensor] = []
-        self._out_tokens_bufs: List[torch.Tensor] = []
-        self._new_seq_lens_bufs: List[torch.Tensor] = []
+
+        if get_spec().speculative_adaptive:
+            # Fixed batch-size width routing: ``speculative_num_steps`` is the
+            # launch width's steps+1 mirror (the widest routed width, forced by
+            # arg_groups.speculative_hook), which is what the controller and the
+            # generic scheduler/KV accounting read.
+            self.speculative_num_steps = int(self.block_size) - 1
+            self.adaptive_controller = AdaptiveController(
+                self, config_path=get_spec().speculative_adaptive_config
+            )
 
     @property
     def draft_worker(self):
@@ -510,6 +629,68 @@ class DFlashWorkerV2(BaseSpecWorker):
             "update_mamba_state_after_mtp_verify",
         )
 
+    def _dflash_width(self, block_size: int) -> DFlashWidthState:
+        """The prepared resource set for one verify width, created once per width."""
+        width = int(block_size)
+        state = self._dflash_widths.get(width)
+        if state is None:
+            state = DFlashWidthState(
+                block_size=width,
+                pos_offsets=build_block_pos_offsets(length=width, device=self.device),
+                spec_info=make_draft_block_spec_info(
+                    draft_token_num=width, device=self.device
+                ),
+            )
+            self._dflash_widths[width] = state
+        return state
+
+    def _apply_width_state(self, width: DFlashWidthState) -> None:
+        """Point every width-bound live resource at *width*'s prepared set.
+
+        These move as one unit: the draft graph of a width samples through that
+        width's folded sampler, whose static outputs its captured nodes write,
+        and the block scratch is indexed by the same row width the convolutions
+        and the verify spec metadata describe. Swapping only some of them lets a
+        round read another width's layout.
+        """
+        switched = self._active_width is not width
+        self._active_width = width
+        self.block_size = width.block_size
+        self._block_pos_offsets = width.pos_offsets
+        self._draft_block_spec_info = width.spec_info
+        self._draft_block_ids_buf = width.ids
+        self._draft_block_positions_buf = width.positions
+        self._draft_block_tokens_buf = width.tokens
+        self._draft_verify_out_cache_loc_buf = width.cache_loc
+        self._draft_block_end_buf = width.block_end
+        self._draft_seq_lens_cpu_buf = width.seq_lens_cpu
+        self._draft_sampler = width.draft_sampler
+        if switched:
+            # Conv layouts index the block; keep the model in step with the
+            # scratch and metadata above.
+            self.draft_model.set_block_size(width.block_size)
+            if self.adaptive_controller is not None:
+                # Generic scheduler/KV accounting reads the width in the
+                # steps+1 convention the controller's table is written in.
+                self.speculative_num_steps = width.block_size - 1
+                self.speculative_num_draft_tokens = width.block_size
+
+    def _launch_buffer_capacity(self, cuda_graph_bs: Optional[List[int]] = None) -> int:
+        """Rows every routed width's block scratch is provisioned with.
+
+        The largest decode batch this run can serve, so a concurrency transition
+        never reallocs buffers that already-captured graphs (or the round in
+        flight) point at. Mirrors the ceiling the eager fixed-max buffers and the
+        shared logits rows are sized from.
+        """
+        cap = int(get_schedule().max_running_requests or 0)
+        cfg = get_exec().graph.cuda_graph_config
+        if cfg is not None and cfg.decode.max_bs:
+            cap = max(cap, int(cfg.decode.max_bs))
+        if cuda_graph_bs:
+            cap = max(cap, max(cuda_graph_bs))
+        return max(1, cap)
+
     def init_cuda_graphs(self):
         capture_decode_cuda_graph = (
             get_exec().graph.cuda_graph_config.decode.backend != Backend.DISABLED
@@ -523,15 +704,55 @@ class DFlashWorkerV2(BaseSpecWorker):
                     "memory is available after target backend initialization.",
                     available_mem,
                 )
+        launch_width = self._dflash_width(self.block_size)
         if capture_decode_cuda_graph:
             # Must run before capture so the draft graph folds the head in.
-            self._draft_sampler = self._maybe_build_draft_sampler()
+            launch_width.draft_sampler = self._maybe_build_draft_sampler()
+            self._draft_sampler = launch_width.draft_sampler
             if self._draft_sampler is not None:
                 self.draft_model_runner.capture_tail_hooks.append(
                     make_draft_sampler_capture_hook(self._draft_sampler)
                 )
+        if self.adaptive_controller is not None:
+            # Provision every routed width up front, at full capacity: allocations
+            # and the addresses captured graphs baked stay put for the process
+            # lifetime, so a C1<->Cn transition costs only reference swaps.
+            cap = self._launch_buffer_capacity()
+            for steps in self.adaptive_controller.candidate_steps:
+                routed = self._dflash_width(steps + 1)
+                routed.ensure_scratch(cap, self.device)
+                routed.ensure_bonus(cap, self.device)
+            self._apply_width_state(launch_width)
         self._draft_worker.init_cuda_graphs(
             capture_decode_cuda_graph=capture_decode_cuda_graph
+        )
+        controller = self.adaptive_controller
+        if controller is None:
+            return
+        target_model_runner = self._target_worker.model_runner
+        controller.register(
+            DFlashRuntimeState(
+                speculative_num_steps=self.speculative_num_steps,
+                speculative_num_draft_tokens=self.speculative_num_draft_tokens,
+                draft_attn_backend=self.draft_model_runner.attn_backend,
+                cuda_graph_runner=self.draft_model_runner.decode_cuda_graph_runner,
+                target_attn_backend=target_model_runner.attn_backend,
+                target_graph_runner=target_model_runner.decode_cuda_graph_runner,
+                draft_extend_attn_backend=None,
+                cuda_graph_runner_for_draft_extend=None,
+                width_state=launch_width,
+            )
+        )
+        # The other widths capture only the buckets their own policy can reach
+        # (init_states prunes with the full canonical list kept by
+        # plan_launch_capture). Where the launch capture itself was skipped --
+        # decode graphs disabled, or the low-memory fallback -- nothing is
+        # captured for them either: an empty bucket list is the scoped
+        # backend=disabled answer their builders honour.
+        controller.init_states(
+            cuda_graph_bs=(
+                controller.launch_cuda_graph_bs if capture_decode_cuda_graph else []
+            )
         )
 
     @staticmethod
@@ -745,35 +966,13 @@ class DFlashWorkerV2(BaseSpecWorker):
             self._fused_kv_helper = None
 
     def _ensure_draft_block_buffers(self, bs: int) -> None:
-        cap = (
-            0
-            if self._draft_block_ids_buf is None
-            else int(self._draft_block_ids_buf.shape[0])
-        )
-        if cap >= int(bs):
-            return
-
-        new_cap = max(int(bs), cap * 2 if cap > 0 else int(bs))
-        device = self.device
-        block_size = int(self.block_size)
-        self._draft_block_ids_buf = torch.empty(
-            (new_cap, block_size), dtype=torch.long, device=device
-        )
-        self._draft_block_positions_buf = torch.empty(
-            (new_cap, block_size), dtype=torch.int64, device=device
-        )
-        self._draft_block_tokens_buf = torch.empty(
-            (new_cap, block_size), dtype=torch.long, device=device
-        )
-        self._draft_verify_out_cache_loc_buf = torch.empty(
-            (new_cap, block_size), dtype=torch.int64, device=device
-        )
-        self._draft_block_end_buf = torch.empty(
-            (new_cap,), dtype=torch.int32, device=device
-        )
-        self._draft_seq_lens_cpu_buf = torch.empty(
-            (new_cap,), dtype=torch.int32, device="cpu"
-        )
+        # Keyed by width, not by capacity alone: a [cap, 6] set cannot serve a
+        # 4-token verify round (the Triton kernels require row-major contiguous
+        # outputs, so a [:, :4] view of it is unusable), and a width switch must
+        # not have to wait for a larger allocation.
+        width = self._dflash_width(self.block_size)
+        width.ensure_scratch(bs, self.device)
+        self._apply_width_state(width)
 
     def __getattr__(self, name):
         # Delegate anything not implemented yet to the target worker. Guard
@@ -1681,35 +1880,7 @@ class DFlashWorkerV2(BaseSpecWorker):
             )
 
     def _ensure_accept_bonus_buffers(self, bs: int) -> None:
-        if self._accept_bonus_buffer_cap >= int(bs):
-            return
-
-        new_cap = max(
-            int(bs),
-            (
-                self._accept_bonus_buffer_cap * 2
-                if self._accept_bonus_buffer_cap > 0
-                else int(bs)
-            ),
-        )
-        device = self.device
-        block_size = int(self.block_size)
-        self._accept_len_buf = torch.empty((new_cap,), dtype=torch.int32, device=device)
-        self._commit_lens_bufs = [
-            torch.empty((new_cap,), dtype=torch.int32, device=device) for _ in range(2)
-        ]
-        # int64 keeps the downstream .to(torch.int64) a no-op.
-        self._bonus_id_bufs = [
-            torch.empty((new_cap,), dtype=torch.int64, device=device) for _ in range(2)
-        ]
-        self._out_tokens_bufs = [
-            torch.empty((new_cap, block_size), dtype=torch.int64, device=device)
-            for _ in range(2)
-        ]
-        self._new_seq_lens_bufs = [
-            torch.empty((new_cap,), dtype=torch.int64, device=device) for _ in range(2)
-        ]
-        self._accept_bonus_buffer_cap = new_cap
+        self._dflash_width(self.block_size).ensure_bonus(bs, self.device)
 
     def _next_accept_bonus_buffers(self, bs: int) -> tuple[
         torch.Tensor,
@@ -1718,17 +1889,11 @@ class DFlashWorkerV2(BaseSpecWorker):
         torch.Tensor,
         torch.Tensor,
     ]:
-        self._ensure_accept_bonus_buffers(bs)
-        assert self._accept_len_buf is not None
-        slot = self._accept_bonus_buffer_slot
-        self._accept_bonus_buffer_slot = (slot + 1) % 2
-        return (
-            self._accept_len_buf[:bs],
-            self._commit_lens_bufs[slot][:bs],
-            self._bonus_id_bufs[slot][:bs],
-            self._out_tokens_bufs[slot][:bs],
-            self._new_seq_lens_bufs[slot][:bs],
-        )
+        # The out-token rows carry one verify block per request, so they belong
+        # to the active width's set rather than to a single worker-wide pair.
+        width = self._dflash_width(self.block_size)
+        width.ensure_bonus(bs, self.device)
+        return width.next_bonus(bs)
 
     def _validate_phase1_sampling_support(self, batch: ScheduleBatch) -> None:
         sampling_info = batch.sampling_info
@@ -1877,6 +2042,12 @@ class DFlashWorkerV2(BaseSpecWorker):
 
         bs = len(batch.seq_lens)
         device = self.device
+
+        # The one place the active width changes at run time: this batch's own
+        # size, at its own forward boundary, after admission and before any
+        # width-bound buffer is touched. A verify-completion callback never
+        # repoints a state an in-flight batch is still running against.
+        self.activate_step_by_batch(bs)
 
         # --- 1) Draft a fixed block with the draft model.
         target_model = self.target_worker.model_runner.model
@@ -2295,3 +2466,363 @@ class DFlashWorkerV2(BaseSpecWorker):
             routed_experts_output=target_out.routed_experts_output,
             indexer_topk_output=target_out.indexer_topk_output,
         )
+
+    # -- Adaptive speculative decoding protocol (fixed width routing) --
+
+    def _decode_graph_capture_bs(self) -> Optional[List[int]]:
+        """The decode buckets the adaptive width states must be sized against.
+
+        Read from the canonical ``cuda_graph_config[decode].bs``, not the legacy
+        ``cuda_graph_bs_decode`` alias: the resolution pipeline folds the legacy
+        flags into the canonical config once at startup and never writes them
+        back, so an adaptive build that read the alias could see a stale list (or
+        ``None``) and route C1 onto a width whose BS1 graph nothing captured.
+        ``None`` (no bucket list, decode graphs off) keeps the no-pruning
+        semantics ``init_states(cuda_graph_bs=None)`` already carries.
+        """
+        cfg = get_exec().graph.cuda_graph_config
+        if cfg is None or check_cuda_graph_backend(Phase.DECODE, Backend.DISABLED):
+            return None
+        return list(cfg.decode.bs) if cfg.decode.bs is not None else None
+
+    def prepare_adaptive_launch_capture(self) -> None:
+        """Scope the launch width's start-up capture to its reachable buckets.
+
+        Called by ``Scheduler.init_all_cuda_graphs`` before any capture begins.
+        Only the launch width's decode/verify capture is scoped, so the
+        process-shared logits buffer and the eager fixed-max allocations stay
+        provisioned off the FULL canonical bucket list; the queue is consumed at
+        the decode-capture boundaries and cleared on every exit path. With a
+        single-candidate-per-tier table the launch width is only reachable at the
+        batch sizes its own tier names -- block6 at C1 -- so the W6 graphs get
+        exactly that one bucket instead of the full C1-Cn set.
+        """
+        controller = self.adaptive_controller
+        if controller is None:
+            return
+        full_bs = self._decode_graph_capture_bs()
+        reachable_bs = controller.plan_launch_capture(full_bs)
+        if reachable_bs is None or reachable_bs == sorted(full_bs or []):
+            return
+        set_adaptive_launch_capture_scope(
+            scoped_capture_cuda_graph_config(reachable_bs)
+        )
+
+    @contextlib.contextmanager
+    def _private_capture_scope(self):
+        """Keep one extra width's capture off the live state's buffers.
+
+        Two live graphs may share a static input tensor while fill and replay
+        stay serialized -- that is what the process-wide input-buffer pool
+        relies on. Capture is the case that does not carry: the build's dummy
+        forward fills whichever storage the pool handed out with capture-time
+        padding and records writes against it, so an extra width aliasing the
+        live width's canonical buffer would leave both graphs with content only
+        the later capture decided. Hence private allocations for the build
+        window -- and a fresh kernel workspace for the draft backends built
+        through the attention registry, which reads that flag.
+        """
+        draft_runner = self.draft_model_runner
+        backup_workspace = getattr(draft_runner, "init_new_workspace", False)
+        draft_runner.init_new_workspace = True
+        backup_buffers = set_private_input_buffers(True)
+        try:
+            yield
+        finally:
+            draft_runner.init_new_workspace = backup_workspace
+            set_private_input_buffers(backup_buffers)
+
+    @contextlib.contextmanager
+    def _override_worker_state(
+        self,
+        speculative_num_steps: int,
+        speculative_num_draft_tokens: int,
+        cuda_graph_bs: Optional[List[int]] = None,
+    ):
+        """Temporarily run this worker at one routed width so its capture sizes
+        everything (conv layout, scratch, spec metadata) for that width.
+
+        Backs up every pointer the build can move -- the worker's scalars and
+        width set, the draft runner's live backend and graph runner, its folded
+        sampler hook, and the published spec / cuda-graph leaves the capture
+        consumers read -- and puts all of it back in ``finally``, so a failed
+        capture cannot leave the live width pointing at another width's graphs.
+        """
+        draft_runner = self.draft_model_runner
+        backup = (
+            self._active_width,
+            getattr(self, "speculative_num_steps", None),
+            self.speculative_num_draft_tokens,
+            draft_runner.attn_backend,
+            draft_runner.decode_cuda_graph_runner,
+            list(draft_runner.capture_tail_hooks),
+            get_spec().speculative_num_steps,
+            get_spec().speculative_num_draft_tokens,
+            get_exec().graph.cuda_graph_config,
+        )
+        cap = self._launch_buffer_capacity(cuda_graph_bs)
+        width = self._dflash_width(speculative_num_draft_tokens)
+        width.ensure_scratch(cap, self.device)
+        width.ensure_bonus(cap, self.device)
+        self._apply_width_state(width)
+        self.speculative_num_steps = int(speculative_num_steps)
+        self.speculative_num_draft_tokens = int(speculative_num_draft_tokens)
+        get_context().override(
+            "adaptive_spec.capture_override",
+            speculative_num_steps=speculative_num_steps,
+            speculative_num_draft_tokens=speculative_num_draft_tokens,
+        )
+        if cuda_graph_bs is not None:
+            # Swap the canonical config leaf with fresh phase copies rather than
+            # mutating the published config in place -- the capture-list
+            # consumers read ``cuda_graph_config[decode]``, and every other
+            # width and later reader shares that object. An empty list disables
+            # the decode phase the way the runners ask about it (backend
+            # ``disabled``); dropping only ``bs`` would still advertise FULL.
+            get_context().override(
+                "adaptive_spec.capture_override",
+                cuda_graph_config=scoped_capture_cuda_graph_config(cuda_graph_bs),
+            )
+        try:
+            yield
+        finally:
+            (
+                active_width,
+                num_steps,
+                draft_tokens,
+                draft_backend,
+                draft_graph,
+                hooks,
+                old_steps,
+                old_tokens,
+                old_cfg,
+            ) = backup
+            self._apply_width_state(active_width)
+            self.speculative_num_steps = num_steps
+            self.speculative_num_draft_tokens = draft_tokens
+            draft_runner.attn_backend = draft_backend
+            draft_runner.decode_cuda_graph_runner = draft_graph
+            draft_runner.capture_tail_hooks[:] = hooks
+            get_context().override(
+                "adaptive_spec.capture_restore",
+                speculative_num_steps=old_steps,
+                speculative_num_draft_tokens=old_tokens,
+                cuda_graph_config=old_cfg,
+            )
+
+    def build_adaptive_runtime_state(
+        self,
+        speculative_num_steps: int,
+        speculative_num_draft_tokens: int,
+        cuda_graph_bs: Optional[List[int]] = None,
+    ) -> DFlashRuntimeState:
+        """Build the runtime state for one routed width.
+
+        For DFLASH the draft and target phases both consume a fixed-width block
+        in a single forward, so the state owns two attention backends and two
+        verify-graph sets: the draft's (captured by the draft runner, with the
+        draft sampler folded in) and the target's. DFLASH materializes draft KV
+        from target hidden states instead of running a draft-extend stage, so
+        those fields stay ``None``.
+        """
+        tic = time.perf_counter()
+        before_mem = get_available_gpu_memory(self.device, self.gpu_id)
+
+        with self._override_worker_state(
+            speculative_num_steps,
+            speculative_num_draft_tokens,
+            cuda_graph_bs=cuda_graph_bs,
+        ), self._private_capture_scope():
+            draft_runner = self.draft_model_runner
+            width = self._active_width
+            draft_attn_backend = draft_runner._get_attention_backend(
+                init_new_workspace=True
+            )
+            draft_runner.attn_backend = draft_attn_backend
+
+            # A sampler per width: its static output buffers are written by the
+            # nodes captured in this graph, and their widths describe this block.
+            width.draft_sampler = self._maybe_build_draft_sampler()
+            backup_hooks = list(draft_runner.capture_tail_hooks)
+            draft_runner.capture_tail_hooks[:] = (
+                [make_draft_sampler_capture_hook(width.draft_sampler)]
+                if width.draft_sampler is not None
+                else []
+            )
+            draft_graph_runner = None
+            try:
+                if not check_cuda_graph_backend(Phase.DECODE, Backend.DISABLED):
+                    draft_capture = capture_decode_graph(model_runner=draft_runner)
+                    draft_graph_runner = draft_capture.runner
+                    self._additional_graph_memory_usage["draft_verify"] = (
+                        self._additional_graph_memory_usage.get("draft_verify", 0.0)
+                        + draft_capture.memory_usage_gb
+                    )
+                    self._additional_graph_time_usage["draft_verify"] = (
+                        self._additional_graph_time_usage.get("draft_verify", 0.0)
+                        + draft_capture.capture_time
+                    )
+            finally:
+                # Never leave another width's hook behind.
+                draft_runner.capture_tail_hooks[:] = backup_hooks
+
+            target_model_runner = self._target_worker.model_runner
+            backup_init = target_model_runner.init_new_workspace
+            try:
+                target_attn_backend = target_model_runner._get_attention_backend(
+                    init_new_workspace=True
+                )
+            finally:
+                target_model_runner.init_new_workspace = backup_init
+
+            target_graph_runner = None
+            if not check_cuda_graph_backend(Phase.DECODE, Backend.DISABLED):
+                TargetGraphRunnerCls = (
+                    NPUGraphRunner if _is_npu else DecodeCudaGraphRunner
+                )
+                target_graph_before_mem = get_available_gpu_memory(
+                    self.device, self.gpu_id
+                )
+                target_graph_tic = time.perf_counter()
+                # The one-per-model target warmup already ran for the launch
+                # width, so opt this state's capture back into it against the
+                # backend its own graphs are about to be captured against
+                # (adaptive_target_graph_warmup restores both attributes).
+                with adaptive_target_graph_warmup(
+                    target_model_runner, target_attn_backend
+                ):
+                    target_graph_runner = TargetGraphRunnerCls(
+                        target_model_runner,
+                        attn_backend=target_attn_backend,
+                        speculative_num_steps=speculative_num_steps,
+                        speculative_num_draft_tokens=speculative_num_draft_tokens,
+                    )
+                # This state's target backend owns its own GDN recovery graphs:
+                # they bake that backend's address-stable recovery index buffers
+                # and plan, and the startup capture only ever saw the launch
+                # state's pair.
+                target_model_runner.maybe_capture_gdn_recovery_graphs(
+                    attn_backend=target_attn_backend,
+                    capture_bs=getattr(target_graph_runner, "capture_bs", None),
+                )
+                target_graph_after_mem = get_available_gpu_memory(
+                    self.device, self.gpu_id
+                )
+                self._additional_graph_memory_usage["target_verify"] = (
+                    self._additional_graph_memory_usage.get("target_verify", 0.0)
+                    + target_graph_before_mem
+                    - target_graph_after_mem
+                )
+                self._additional_graph_time_usage["target_verify"] = (
+                    self._additional_graph_time_usage.get("target_verify", 0.0)
+                    + (time.perf_counter() - target_graph_tic)
+                )
+
+            state = DFlashRuntimeState(
+                speculative_num_steps=speculative_num_steps,
+                speculative_num_draft_tokens=speculative_num_draft_tokens,
+                draft_attn_backend=draft_attn_backend,
+                cuda_graph_runner=draft_graph_runner,
+                target_attn_backend=target_attn_backend,
+                target_graph_runner=target_graph_runner,
+                draft_extend_attn_backend=None,
+                cuda_graph_runner_for_draft_extend=None,
+                width_state=width,
+            )
+
+        after_mem = get_available_gpu_memory(self.device, self.gpu_id)
+        log_info_on_rank0(
+            logger,
+            f"Built DFLASH routed width state: block={speculative_num_draft_tokens}, "
+            f"steps={speculative_num_steps}, bs={cuda_graph_bs}, "
+            f"elapsed={time.perf_counter() - tic:.2f}s, "
+            f"mem={(before_mem - after_mem):.2f}GB",
+        )
+        return state
+
+    def apply_runtime_state(self, state: SpecRuntimeState) -> None:
+        """Switch to a prepared width. No reallocation, no recapture, no sync."""
+        if (
+            self.speculative_num_draft_tokens == state.speculative_num_draft_tokens
+            and getattr(self, "speculative_num_steps", None)
+            == state.speculative_num_steps
+        ):
+            return
+
+        # Order the transition before anything is repointed: the backends being
+        # retired may still have a side-stream SSM recovery in flight, and only
+        # they know about it. Swapping first would let the incoming width's first
+        # target forward overwrite the shared SSM pool that recovery is reading.
+        from sglang.srt.layers.attention.hybrid_linear_attn_backend import (
+            HybridLinearAttnBackend,
+        )
+
+        outgoing_backends = (
+            self._target_worker.model_runner.attn_backend,
+            self.draft_model_runner.attn_backend,
+            getattr(self.draft_model_runner, "draft_attn_backend", None),
+        )
+        drained: set = set()
+        for backend in outgoing_backends:
+            if (
+                isinstance(backend, HybridLinearAttnBackend)
+                and id(backend) not in drained
+            ):
+                backend.drain_pending_recovery()
+                drained.add(id(backend))
+
+        width = getattr(state, "width_state", None) or self._dflash_width(
+            state.speculative_num_draft_tokens
+        )
+        self._apply_width_state(width)
+        self.speculative_num_steps = state.speculative_num_steps
+        self.speculative_num_draft_tokens = state.speculative_num_draft_tokens
+
+        # Draft and target graphs are this width's own: replay can never fall
+        # back onto the launch width's baked block geometry.
+        self.draft_model_runner.attn_backend = state.draft_attn_backend
+        self.draft_model_runner.decode_cuda_graph_runner = state.cuda_graph_runner
+        self._target_worker.model_runner.attn_backend = state.target_attn_backend
+        self._target_worker.model_runner.decode_cuda_graph_runner = (
+            state.target_graph_runner
+        )
+        # The mamba/SSM commit hook belongs to the target backend just installed.
+        self._need_mamba_verify_commit = mambaish_config(
+            self.model_runner.model_config
+        ) is not None and hasattr(
+            state.target_attn_backend,
+            "update_mamba_state_after_mtp_verify",
+        )
+
+        log_info_on_rank0(
+            logger,
+            "Switch DFLASH routed width: "
+            f"block {width.block_size}, steps {state.speculative_num_steps}",
+        )
+
+        # Sync server_args
+        get_context().override(
+            "adaptive_spec.restore",
+            speculative_num_steps=state.speculative_num_steps,
+            speculative_num_draft_tokens=state.speculative_num_draft_tokens,
+        )
+
+    def on_verify_complete_cpu(
+        self, num_correct_drafts_per_req: list[int], batch_size: int = 0
+    ) -> None:
+        """Feed the routed width's slot; deliberately never switches the state.
+
+        A routed width has one candidate per tier, so the EMA has nothing to move
+        between -- and even if a future table grew a second candidate, applying it
+        here would repoint backends and graph runners an in-flight batch (launched
+        under the other width) is still running against. The width is applied by
+        ``activate_step_by_batch`` at that batch's own forward boundary.
+        """
+        if self.adaptive_controller is not None:
+            self.adaptive_controller.on_verify_complete(
+                num_correct_drafts_per_req, batch_size=batch_size
+            )
+
+    def activate_step_by_batch(self, batch_size: int) -> None:
+        if self.adaptive_controller is not None:
+            self.adaptive_controller.activate_step_by_batch(batch_size)
