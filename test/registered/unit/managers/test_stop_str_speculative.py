@@ -136,6 +136,46 @@ class TestStopStrSpeculative(unittest.TestCase):
         self.assertEqual(req.finished_reason.matched, r"\.$")
         self.assertEqual(req.finished_len, 2)
 
+    def test_stop_regex_end_anchored_midchunk(self):
+        """An end-anchored stop_regex that matches only after a token accepted
+        mid-step ("a." in "a.b") must still finish the request."""
+        req = _make_req([60, 61, 62], stop_regex=[r"[.!?]\s*$"])
+        req.update_finish_state(new_accepted_len=3)
+        self.assertTrue(req.finished())
+        self.assertEqual(req.finished_reason.matched, r"[.!?]\s*$")
+        self.assertEqual(req.finished_len, 2)
+
+    # --- pennyroyal follow-up: the mid-step scan's None branch and both block sizes ---
+    def test_stop_regex_end_anchored_midchunk_no_match_stays_running(self):
+        # True no-match: "klmn" contains no end-anchored [.!?] match at any
+        # accepted prefix, so the new None return must leave the request running
+        # with no finish reason (a non-anchor-prone scan must not fabricate a stop).
+        req = _make_req([10, 11, 12, 13], stop_regex=[r"[.!?]\s*$"])
+        req.update_finish_state(new_accepted_len=4)
+        self.assertFalse(req.finished())
+        self.assertIsNone(req.finished_reason)
+        self.assertIsNone(req.finished_len)
+
+    def test_stop_regex_end_anchored_midchunk_block4(self):
+        # Flash-Next4 profile (block 4): the accepted block decodes to "a.bk" so
+        # the full-window search misses the end-anchored stop; the mid-step scan
+        # must finish at "a." and the emitted slice must exclude the two later tokens.
+        req = _make_req([60, 61, 62, 10], stop_regex=[r"[.!?]\s*$"])
+        req.update_finish_state(new_accepted_len=4)
+        self.assertTrue(req.finished())
+        self.assertEqual(req.finished_reason.matched, r"[.!?]\s*$")
+        self.assertEqual(req.finished_len, 2)
+        self.assertEqual(req.tokenizer.decode(req.output_ids[: req.finished_len]), "a.")
+
+    def test_stop_regex_end_anchored_midchunk_block8(self):
+        # 27B8 profile (block 8): same mid-block miss with "a.b.klmn" accepted.
+        req = _make_req([60, 61, 62, 63, 10, 11, 12, 13], stop_regex=[r"[.!?]\s*$"])
+        req.update_finish_state(new_accepted_len=8)
+        self.assertTrue(req.finished())
+        self.assertEqual(req.finished_reason.matched, r"[.!?]\s*$")
+        self.assertEqual(req.finished_len, 2)
+        self.assertEqual(req.tokenizer.decode(req.output_ids[: req.finished_len]), "a.")
+
     # --- decoded_text-only branch ---
     def test_stop_str_only_in_decoded_text_sets_no_finished_len(self):
         # Documents current behavior: when the stop is only in decoded_text (not
