@@ -19,7 +19,10 @@ It is designed for workloads whose accept length changes over time, where one st
 
 For DFLASH the launch always carries the widest routed width (`--speculative-num-steps` / `--speculative-num-draft-tokens`
 are raised to it if lower, and a conflicting `--speculative-dflash-block-size` is refused), because every allocation a
-CUDA graph bakes in is sized once at that maximum and the narrower widths reuse it. See
+CUDA graph bakes in is sized once at that maximum and the narrower widths reuse it. Width routing also requires the
+prefill phase to run on the default `breakable` / `tc_piecewise` graph (or no prefill graph): with
+`cuda_graph_config[prefill].backend='full'` the captured prefill graph replays through whichever width's backend is live
+and asserts on metadata only its own capture filled, so that combination is refused too. See
 `configs/pennyroyal/adaptive-dflash2.json` for a shipped block6-at-C1 / block4-at-C2+ policy.
 
 ## Why adaptive steps help

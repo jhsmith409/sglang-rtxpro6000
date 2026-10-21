@@ -71,6 +71,10 @@ def _worker_shim(*, block_size=8, selector, draft_model, lm_head=None, tp_rank=0
         use_compact_draft_cache=False,
         draft_model=draft_model,
         _draft_probs_buf=None,
+        # The sampling scratch is keyed by width, so the shim carries the
+        # registry: one width here, lazy growth, the pre-routing behavior.
+        _dflash_widths={},
+        adaptive_controller=None,
         _draft_worker=SimpleNamespace(alloc_memory_pool=lambda **kwargs: None),
         _target_worker=SimpleNamespace(
             model_runner=SimpleNamespace(
@@ -80,6 +84,9 @@ def _worker_shim(*, block_size=8, selector, draft_model, lm_head=None, tp_rank=0
     )
     worker._install_selector_head = (
         lambda head: worker_mod.DFlashWorkerV2._install_selector_head(worker, head)
+    )
+    worker._dflash_width = lambda width: worker_mod.DFlashWorkerV2._dflash_width(
+        worker, width
     )
     return worker
 

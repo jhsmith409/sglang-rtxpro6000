@@ -309,7 +309,8 @@ class DFlashWidthState:
     baked into more than a scalar: the checkpoint's grouped convolutions index
     by ``block_size``, the position offsets and verify spec metadata carry the
     block length, the folded draft sampler's static outputs are written by that
-    width's captured graph, and the block scratch must be row-major
+    width's captured graph, the dense proposal-probability scratch carries a
+    ``block_size - 1`` axis, and the block scratch must be row-major
     ``[cap, block_size]`` (the Triton prepare/accept kernels reject a
     ``[:, :block_size]`` view of a wider buffer, and the pre-existing guards
     only compared batch capacity -- so updating the scalar width alone let a
@@ -337,6 +338,25 @@ class DFlashWidthState:
     bonus_ids: tuple = ()
     out_tokens: tuple = ()
     new_seq_lens: tuple = ()
+    probs_cap: int = 0
+    draft_probs: Optional[torch.Tensor] = None  # [cap, block_size - 1, vocab]
+
+    def provision_probs(self, bs: int, vocab: int, device, min_cap: int = 0) -> None:
+        """(Re)allocate this width's dense proposal-probability scratch.
+
+        The ``block_size - 1`` axis belongs to the width, so a round at another
+        width can neither reuse nor be served by this buffer. Sizing the first
+        allocation at ``min_cap`` -- the batch ceiling the run can reach -- is
+        what keeps an alternating C1/C2 workload from re-growing one shared
+        buffer every round (and doubling its capacity each time, which is how a
+        routed run ends up at OOM).
+        """
+        self.probs_cap = max(int(bs), int(min_cap), self.probs_cap * 2)
+        self.draft_probs = torch.zeros(
+            (self.probs_cap, self.block_size - 1, int(vocab)),
+            dtype=torch.float32,
+            device=device,
+        )
 
     def ensure_scratch(self, bs: int, device) -> None:
         """Grow the block scratch capacity; the width itself never changes."""
@@ -668,6 +688,7 @@ class DFlashWorkerV2(BaseSpecWorker):
         self._draft_block_end_buf = width.block_end
         self._draft_seq_lens_cpu_buf = width.seq_lens_cpu
         self._draft_sampler = width.draft_sampler
+        self._draft_probs_buf = width.draft_probs
         if switched:
             # Conv layouts index the block; keep the model in step with the
             # scratch and metadata above.
@@ -1322,12 +1343,27 @@ class DFlashWorkerV2(BaseSpecWorker):
         gamma = block - 1
         vocab = int(next_token_logits.shape[-1])
         # A fresh dense q would zero the whole vocabulary to carry top_k per row.
-        buffer = self._draft_probs_buf
+        # The scratch belongs to the width, not to the worker: gamma is the width
+        # minus one, so a switch can never reuse another width's buffer, and one
+        # shared buffer under width routing reallocates on every alternation of
+        # the two widths -- doubling its capacity each time until the host runs
+        # out of memory. Under routing the first allocation covers the batch
+        # ceiling the run can reach, so a transition swaps pointers; the single
+        # fixed width keeps growing it lazily exactly as it always did.
+        width = self._dflash_width(block)
+        buffer = width.draft_probs
         if buffer is None or buffer.shape[0] < bs or buffer.shape[1:] != (gamma, vocab):
-            cap = bs if buffer is None else max(bs, buffer.shape[0] * 2)
-            buffer = torch.zeros(
-                (cap, gamma, vocab), dtype=torch.float32, device=candidates.device
+            width.provision_probs(
+                bs,
+                vocab,
+                candidates.device,
+                (
+                    0
+                    if self.adaptive_controller is None
+                    else self._launch_buffer_capacity()
+                ),
             )
+            buffer = width.draft_probs
             self._draft_probs_buf = buffer
         draft_probs = buffer[:bs]
         try:

@@ -1144,6 +1144,133 @@ class TestDecodeBoundary(_WidthCase):
             self.assertEqual(batch.seq_lens_sum, 64)
 
 
+# ---------------------------------- selector sampling scratch per width ----#
+
+
+class TestSelectorSamplingScratch(_WidthCase):
+    """Normal (non-greedy) selector sampling across width transitions.
+
+    ``_selector_sampling_accept`` scatters the selector's sparse q into a dense
+    ``[bs, gamma, vocab]`` buffer for the accept kernel, and ``gamma`` is the
+    width minus one -- so that scratch belongs to a width and cannot outlive a
+    switch. Driven through the real method with the real torch scatter and a
+    stubbed accept kernel: alternating C1/C2/C6 rounds must never re-grow a
+    worker-wide buffer (each realloc used to double its capacity, the OOM path)
+    and must still leave the buffer zeroed for the next round.
+    """
+
+    TOP_K = 2
+
+    def _round(self, worker, batch_size):
+        """One selector-sampling accept round at whatever width this batch routes to."""
+        worker.activate_step_by_batch(batch_size)
+        width = worker.block_size
+        gamma = width - 1
+        # Unique ids per (row, position) slot: the scatter must land exactly on
+        # the q rows, so duplicated ids inside one slice would muddy the check.
+        candidate_ids = torch.arange(
+            batch_size * gamma * self.TOP_K, dtype=torch.int64
+        ).reshape(batch_size, gamma, self.TOP_K)
+        q_rows = torch.rand((batch_size, gamma, self.TOP_K), dtype=torch.float32)
+        recorded = []
+
+        def _accept(**kwargs):
+            probs = kwargs["draft_probs"]
+            assert probs.shape == (batch_size, gamma, VOCAB), probs.shape
+            assert kwargs["gamma"] == gamma
+            assert kwargs["verify_num_draft_tokens"] == width
+            recorded.append(probs.clone())
+            return (
+                torch.ones(batch_size, dtype=torch.int64),
+                torch.zeros(batch_size, dtype=torch.int64),
+                None,
+            )
+
+        self._patch(dflash_module, "accept_sampling", _accept)
+        accept_len, bonus = worker._selector_sampling_accept(
+            candidates=torch.full((batch_size, width), 1, dtype=torch.int64),
+            next_token_logits=torch.randn(batch_size, VOCAB),
+            candidate_ids=candidate_ids,
+            q_rows=q_rows,
+            sampling_info=SimpleNamespace(is_all_greedy=False),
+            draft_input=None,
+        )
+        self.assertEqual(accept_len.shape, (batch_size,))
+        self.assertEqual(bonus.shape, (batch_size,))
+        return width, recorded[0], candidate_ids, q_rows
+
+    @staticmethod
+    def _assert_q_association(probs, candidate_ids, q_rows):
+        for row in range(probs.shape[0]):
+            for slot in range(probs.shape[1]):
+                ids = candidate_ids[row, slot]
+                mass = probs[row, slot]
+                torch.testing.assert_close(mass[ids], q_rows[row, slot])
+                outside = mass.clone()
+                outside[ids] = 0.0
+                assert float(outside.sum()) == 0.0
+
+    def test_repeated_joins_and_drains_never_reallocate_the_scratch(self):
+        worker = self._launched()
+        for _ in range(6):
+            for batch_size in (1, 2, 6, 1, 3, 1):
+                width, probs, ids, q_rows = self._round(worker, batch_size)
+                self._assert_q_association(probs, ids, q_rows)
+                # The finally-clear ran: the live buffer is back to zero, so the
+                # next round cannot read this round's mass at stale ids.
+                self.assertEqual(
+                    float(worker._draft_probs_buf[:batch_size].abs().sum()),
+                    0.0,
+                    f"width {width} left q behind",
+                )
+
+        pointers = {
+            width: worker._dflash_widths[width].draft_probs.data_ptr()
+            for width in (WIDE, NARROW)
+        }
+        for width, state in worker._dflash_widths.items():
+            self.assertEqual(state.probs_cap, MAX_RUNNING_REQUESTS, width)
+            self.assertEqual(
+                tuple(state.draft_probs.shape), (MAX_RUNNING_REQUESTS, width - 1, VOCAB)
+            )
+
+        # The largest batch the run can serve, on both widths: still no new buffer.
+        self._round(worker, MAX_RUNNING_REQUESTS)
+        self._round(worker, 1)
+        for width, ptr in pointers.items():
+            self.assertEqual(
+                worker._dflash_widths[width].draft_probs.data_ptr(), ptr, width
+            )
+
+    def test_the_live_scratch_pointer_follows_the_active_width(self):
+        worker = self._launched()
+        self._round(worker, 1)
+        self.assertIs(worker._draft_probs_buf, worker._dflash_widths[WIDE].draft_probs)
+        self.assertEqual(worker._draft_probs_buf.shape[1], WIDE - 1)
+        self._round(worker, 4)
+        self.assertIs(
+            worker._draft_probs_buf, worker._dflash_widths[NARROW].draft_probs
+        )
+        self.assertEqual(worker._draft_probs_buf.shape[1], NARROW - 1)
+
+    def test_a_single_fixed_width_still_grows_the_scratch_lazily(self):
+        # No policy -> no routing -> the buffer stays exactly the pre-change
+        # lazy-growth scratch, sized off the batches that actually arrived.
+        worker = _Worker(
+            WIDE, config_path=None, captures=self.captures, target_graphs=[]
+        )
+        self._round(worker, 1)
+        self.assertEqual(
+            worker._draft_probs_buf.shape[0], 1, "no ceiling without routing"
+        )
+        self._round(worker, 3)
+        self.assertEqual(tuple(worker._draft_probs_buf.shape), (3, WIDE - 1, VOCAB))
+        self._round(worker, 2)
+        self.assertEqual(
+            worker._draft_probs_buf.shape[0], 3, "reallocated while it still fit"
+        )
+
+
 # ---------------------------------------------- fixed width / no policy ----#
 
 
