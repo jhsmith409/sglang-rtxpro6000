@@ -214,7 +214,7 @@ _EXPLANATIONS = {
     "PYTHON": "the python interpreter that starts the server, only worth "
     "changing for an unusual layout",
     "TARGET_MODEL": "the folder of the downloaded model you want to serve",
-    "DRAFT_MODEL": "the smaller model the 27b profile drafts tokens with",
+    "DRAFT_MODEL": "the smaller model the DFlash2 profiles draft tokens with",
     "LAUNCH_DIR": "the folder this setup writes your container files into: "
     "run.sh plus the config folder it mounts; save here, and "
     "afterwards ./run.sh runs those files with no Python, "
@@ -278,7 +278,10 @@ _EXPLANATIONS = {
     "USER_ID": "the numeric user that owns the writable folders inside the "
     "container",
     "GROUP_ID": "the numeric group that owns those folders",
-    "PENNYROYAL_PROFILE": "which model recipe the saved file runs",
+    "PENNYROYAL_PROFILE": "which model recipe the saved file runs; new setups "
+    "start on the Flash-Next DFlash2 profile, and the two native-MTP "
+    "Flash-Next profiles are deprecated — they still run, but they "
+    "receive no further updates or testing",
 }
 
 # Installer plumbing that only matters when the shipped layout is not the one
@@ -510,8 +513,9 @@ def run_session(
     # becomes the menu default or a target lookup key: an older
     # 'container:next' file must preselect 'next', and a corrupt value must not
     # become a default that Enter would silently return (or crash the later
-    # CONTAINER_DEFAULT_TARGET lookup). Enter on a fresh file keeps 'next'.
-    menu_default = "next"
+    # CONTAINER_DEFAULT_TARGET lookup). Enter on a fresh file keeps the current
+    # default profile (Flash-Next DFlash2).
+    menu_default = pc.default_profile(mode)
     if existing_profile:
         try:
             menu_default = pc.validate_profile(existing_profile, mode)
@@ -574,8 +578,11 @@ def run_session(
             default = str(repo_root)
         if name == "VENV_PATH" and not default:
             default = str(repo_root / ".venv")
-        if name == "DRAFT_MODEL" and profile != "27b":
-            continue  # this profile does not use a draft; the value is preserved
+        if name == "DRAFT_MODEL" and profile not in pc.DRAFT_PROFILES:
+            # Only the DFlash2 profiles draft with a second checkpoint; a NEXTN
+            # launch keeps its saved value (if any) instead of being asked about
+            # a model its recipe never passes.
+            continue
         if name == "NIXL_STORAGE_BASE" and not default and mode == "native":
             default = str(home / pc.DEFAULT_NATIVE_NIXL_BASE.removeprefix("~/"))
         if name == "LAUNCH_DIR" and not default:
@@ -598,7 +605,11 @@ def run_session(
         answers[name] = prompt.ask_validated(
             label, spec, default=default, allow_empty=allow_empty
         )
-    if profile != "27b" and "DRAFT_MODEL" in saved:
+    if profile not in pc.DRAFT_PROFILES and "DRAFT_MODEL" in saved:
+        # Preserved rather than asked, exactly as above. Switching from 27b to a
+        # NEXTN profile keeps the old path in the file harmlessly; switching to
+        # another draft profile went through the question above, so a stale 27B
+        # draft can never ride along unexamined.
         answers["DRAFT_MODEL"] = saved["DRAFT_MODEL"]
 
     if prompt.confirm(

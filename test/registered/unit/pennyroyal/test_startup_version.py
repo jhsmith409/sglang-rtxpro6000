@@ -26,9 +26,16 @@ SUMMARY = CONFIGS / "startup-summary.sh"
 LAUNCH_PATHS = (
     CONFIGS / "serve-flash-next-frspec.sh",
     CONFIGS / "serve-flash-next.sh",
+    CONFIGS / "serve-flash-next-dflash2.sh",
     CONFIGS / "serve-qwen38-27b-dflash2.sh",
     REPO / "docker" / "pennyroyal" / "launch" / "config" / "start-flash-next-frspec.sh",
     REPO / "docker" / "pennyroyal" / "launch" / "config" / "start-flash-next.sh",
+    REPO
+    / "docker"
+    / "pennyroyal"
+    / "launch"
+    / "config"
+    / "start-flash-next-dflash2.sh",
     REPO / "docker" / "pennyroyal" / "launch" / "config" / "start-27b-dflash2.sh",
 )
 VERSION = (CONFIGS / "pennyroyal.version").read_text().strip()

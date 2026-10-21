@@ -46,23 +46,33 @@ from typing import Optional
 
 PROFILE_KEY = "PENNYROYAL_PROFILE"
 MODES = ("native", "container")
-PROFILES = ("next", "next-plain", "27b")
+PROFILES = ("next", "next-plain", "27b", "next-dflash2")
 RECIPE_BY_PROFILE = {
     "next": "serve-flash-next-frspec.sh",
     "next-plain": "serve-flash-next.sh",
+    "next-dflash2": "serve-flash-next-dflash2.sh",
     "27b": "serve-qwen38-27b-dflash2.sh",
 }
+# The two native-MTP profiles still launch and still work, but they are
+# deprecated: no further updates or testing are promised for them. The label is
+# where the wizard, the saved-config summary, and --show-config all say so.
 PROFILE_LABEL = {
-    "next": "Flash-Next NVFP4 + FR-Spec/native NEXTN",
-    "next-plain": "Flash-Next NVFP4 + native NEXTN without FR-Spec",
+    "next": "Flash-Next NVFP4 + FR-Spec/native NEXTN MTP (deprecated)",
+    "next-plain": "Flash-Next NVFP4 + native NEXTN MTP without FR-Spec (deprecated)",
+    "next-dflash2": "Flash-Next NVFP4 + DFlash2 (DFLASH, FR-Spec, routed widths)",
     "27b": "Qwen3.8-27B FP8 + DFlash2",
 }
-# The --hicache-size literals the three serve recipes pass when the operator
+# The --hicache-size literals the serve recipes pass when the operator
 # chose nothing. --hicache-size counts decimal GB (server_args.hicache_size is
 # an INT and the host pool sizes itself at host_size * 1e9 bytes), not GiB.
-PROFILE_HICACHE_SIZE_GB = {"next": "32", "next-plain": "32", "27b": "96"}
+PROFILE_HICACHE_SIZE_GB = {
+    "next": "32",
+    "next-plain": "32",
+    "next-dflash2": "32",
+    "27b": "96",
+}
 CONTAINER_MODELS_TARGET = "/models"
-DEFAULT_IMAGE = "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.0.2"
+DEFAULT_IMAGE = "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0"
 COMPOSE_RELPATH = "docker/pennyroyal/compose.yaml"
 # The accepted manual container path: an ordinary host run.sh plus a mounted,
 # user-editable directory of SGLang startup scripts and NIXL TOMLs. The beta
@@ -73,11 +83,13 @@ LAUNCH_RELPATH = "docker/pennyroyal/launch"
 STARTUP_BY_PROFILE = {
     "next": "start-flash-next-frspec.sh",
     "next-plain": "start-flash-next.sh",
+    "next-dflash2": "start-flash-next-dflash2.sh",
     "27b": "start-27b-dflash2.sh",
 }
 NIXL_TOML_BY_PROFILE = {
     "next": "nixl-posix-frspec.toml",
     "next-plain": "nixl-posix.toml",
+    "next-dflash2": "nixl-posix.toml",
     "27b": "nixl-posix.toml",
 }
 # Runtime settings the mounted startup scripts deliberately leave to the
@@ -109,10 +121,13 @@ DISK_ONLY_KEYS = ("SGLANG_HICACHE_NIXL_MAX_CACHE_GB",)
 # serve-qwen38-27b-dflash2.sh; the Next profiles read all of these from the
 # environment and are not listed.
 PROFILE_PINNED_KEYS = {
+    # The routed Flash-Next profile has no block-width knob: the policy fixes
+    # 6 at C1 and 4 at C2+, so the 3.0-era SPECULATIVE_NUM_DRAFT_TOKENS setting
+    # is named as unavailable instead of being forwarded and ignored.
+    "next-dflash2": {"SPECULATIVE_NUM_DRAFT_TOKENS": None},
     "27b": {
         "MAX_RUNNING_REQUESTS": "4",
         "MAX_MAMBA_CACHE_SIZE": "24",
-        "MAX_TOTAL_TOKENS": None,
         "TP_SIZE": "1",
         "PENNY_PLE_BACKEND": "ram",
     },
@@ -141,8 +156,17 @@ MODEL_METADATA = {
     "next": ("Qwen4ExpForConditionalGeneration", "qwen4_exp", "qwen4_exp_text"),
     "27b": ("Qwen3_5ForConditionalGeneration", "qwen3_5", "qwen3_5_text"),
 }
-# Profile families: next and next-plain share the Next checkpoint family.
-PROFILE_FAMILY = {"next": "next", "next-plain": "next", "27b": "27b"}
+# Profile families: next, next-plain and next-dflash2 share the Next checkpoint
+# family, and a profile's family is what the metadata sanity check compares to.
+PROFILE_FAMILY = {
+    "next": "next",
+    "next-plain": "next",
+    "next-dflash2": "next",
+    "27b": "27b",
+}
+# Profiles whose recipe names a draft checkpoint, so a saved configuration
+# without DRAFT_MODEL is an error rather than a missing optional path.
+DRAFT_PROFILES = ("27b", "next-dflash2")
 
 _KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _INT_RE = re.compile(r"^[0-9]+$")
@@ -177,9 +201,9 @@ SHARED_KEYS: tuple[KeySpec, ...] = (
     ),
     KeySpec(
         "DRAFT_MODEL",
-        "draft checkpoint directory (27b profile)",
+        "draft checkpoint directory (the DFlash2 profiles)",
         "path",
-        prompt="Downloaded draft model directory (27b profile only)",
+        prompt="Downloaded draft model directory (DFlash2 profiles only)",
     ),
     KeySpec(
         "SGLANG_HICACHE_NIXL_MAX_CACHE_GB",
@@ -849,7 +873,9 @@ def load_config(
 
 
 def default_profile(mode: str) -> str:
-    return "next"
+    """Newly generated setups start on the Flash-Next DFlash2 profile; the
+    deprecated native-MTP profiles stay selectable and saved files keep theirs."""
+    return "next-dflash2"
 
 
 @dataclass
@@ -1256,12 +1282,13 @@ def _plan_native(
         issue = architecture_issue(config.profile, "target", Path(target))
         if issue:
             plan.issues.append(issue)
-    if config.profile == "27b":
+    if config.profile in DRAFT_PROFILES:
         if not draft:
             plan.issues.append(
                 Issue(
                     "error",
-                    "profile 27b needs DRAFT_MODEL " "(the DFlash2 checkpoint)",
+                    f"profile {config.profile} needs DRAFT_MODEL "
+                    "(the DFlash2 checkpoint)",
                     key="DRAFT_MODEL",
                 )
             )
@@ -1546,10 +1573,10 @@ def _plan_container(
     draft = resolve(config, environ, "DRAFT_MODEL")
     if draft.value:
         plan.env["DRAFT_MODEL"] = draft.value
-    elif config.profile == "27b":
-        plan.env["DRAFT_MODEL"] = CONTAINER_DEFAULT_DRAFT
+    elif config.profile in DRAFT_PROFILES:
+        plan.env["DRAFT_MODEL"] = CONTAINER_DEFAULT_DRAFT[config.profile]
     plan.origins["DRAFT_MODEL"] = draft.origin or (
-        "profile default" if config.profile == "27b" else "not used"
+        "profile default" if config.profile in DRAFT_PROFILES else "not used"
     )
 
     disk_tier = plan.env.get("NIXL", "on")
@@ -1711,9 +1738,13 @@ def _plan_container(
 CONTAINER_DEFAULT_TARGET = {
     "next": f"{CONTAINER_MODELS_TARGET}/RadixArk-Qwen3.8-Flash-Next-NVFP4",
     "next-plain": f"{CONTAINER_MODELS_TARGET}/RadixArk-Qwen3.8-Flash-Next-NVFP4",
+    "next-dflash2": f"{CONTAINER_MODELS_TARGET}/RadixArk-Qwen3.8-Flash-Next-NVFP4",
     "27b": f"{CONTAINER_MODELS_TARGET}/Qwen3.8-27B-FP8",
 }
-CONTAINER_DEFAULT_DRAFT = f"{CONTAINER_MODELS_TARGET}/Qwen3.8-27B-DFlash2"
+CONTAINER_DEFAULT_DRAFT = {
+    "next-dflash2": f"{CONTAINER_MODELS_TARGET}/incoai-Qwen3.8-Flash-Next-DFlash2",
+    "27b": f"{CONTAINER_MODELS_TARGET}/Qwen3.8-27B-DFlash2",
+}
 
 
 def _read_template(path: Path, purpose: str) -> str:

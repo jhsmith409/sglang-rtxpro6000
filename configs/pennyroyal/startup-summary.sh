@@ -47,33 +47,46 @@ pennyroyal_startup_summary() {
   done
   case "${setting[--speculative-algorithm]:-none}" in
     NEXTN)
-      profile='Qwen3.8 Flash-Next / native NEXTN MTP'
-      # Report the effective behavior, not a manufactured default: a saved
-      # explicit choice is named as such, otherwise the eligibility the
-      # recipes resolved before namespace derivation decides.
-      case "${SGLANG_SM120_ONLINE_MXFP8:-}" in
-        true) online='rowwise FP8 (explicit)' ;;
-        false) online='off (explicit opt-out)' ;;
-        *)
-          if [[ "${ONLINE_FP8_PRECISION:-false}" == rowwise_fp8 ]]; then
-            online='rowwise FP8 (automatic)'
-          else
-            online='off (automatic: eligibility not met)'
-          fi
-          ;;
-      esac
-      if [[ ${setting[--ple-offload-embedding]:-false} == true ]]; then
-        ple='host RAM'
-      elif [[ ${PENNY_PLE_BACKEND:-} == nvme ]]; then
-        ple='NVMe (prepared model overlay)'
-      else
-        ple='no host offload requested'
-      fi
+      # Native MTP is deprecated: it still launches, but it receives no
+      # further updates or testing, and the summary says so where the operator
+      # reads it.
+      profile='Qwen3.8 Flash-Next / native NEXTN MTP (deprecated)'
       ;;
-    DFLASH) profile='Qwen3.8-27B / DFlash2' ;;
+    DFLASH)
+      # Two DFlash2 launches run this same algorithm against different targets,
+      # and the path alone does not say which is which, so the recipe names
+      # itself. The default keeps the 27B report for the recipe that predates
+      # the label.
+      profile="${PENNYROYAL_PROFILE_LABEL:-Qwen3.8-27B / DFlash2 (DFLASH, no FR-Spec)}"
+      ;;
     *) profile="${setting[--speculative-algorithm]:-no speculation}" ;;
   esac
   [[ -z ${setting[--speculative-token-map]:-} ]] || frspec=on
+  # Resident FP8 and PLE placement belong to the launch, not to one speculation
+  # algorithm: the Flash-Next DFlash2 path runs the same rowwise-FP8 candidate
+  # head and the same PLE offload as the NEXTN paths, so both are reported from
+  # what this launch resolved or asked for rather than from its algorithm.
+  # Report the effective behavior, not a manufactured default: a saved explicit
+  # choice is named as such, otherwise the eligibility the recipes resolved
+  # before namespace derivation decides.
+  case "${SGLANG_SM120_ONLINE_MXFP8:-}" in
+    true) online='rowwise FP8 (explicit)' ;;
+    false) online='off (explicit opt-out)' ;;
+    *)
+      if [[ "${ONLINE_FP8_PRECISION:-false}" == rowwise_fp8 ]]; then
+        online='rowwise FP8 (automatic)'
+      else
+        online='off (automatic: eligibility not met)'
+      fi
+      ;;
+  esac
+  if [[ ${setting[--ple-offload-embedding]:-false} == true ]]; then
+    ple='host RAM'
+  elif [[ ${PENNY_PLE_BACKEND:-} == nvme ]]; then
+    ple='NVMe (prepared model overlay)'
+  else
+    ple='no host offload requested'
+  fi
   case "$media" in
     cpu) media_label=CPU ;;
     cuda:0) media_label='main GPU (cuda:0)' ;;
@@ -91,14 +104,30 @@ pennyroyal_startup_summary() {
   if [[ -n ${setting[--speculative-draft-kv-cache-dtype]:-} ]]; then
     printf '  Draft KV dtype: %s\n' "${setting[--speculative-draft-kv-cache-dtype]}"
   fi
+  if [[ -n ${setting[--speculative-token-map]:-} ]]; then
+    printf '  FR-Spec token map: %s\n' "${setting[--speculative-token-map]}"
+  fi
   if [[ ${setting[--speculative-adaptive]:-false} == true ]]; then
-    # The launch line names the policy maximum; the runtime picks the width
-    # per batch from the adaptive config file, so do not report a static one.
-    printf '  Speculation: adaptive MTP up to steps=%s | top-k=%s | draft tokens=%s (policy %s)\n' \
-      "${setting[--speculative-num-steps]:-not set}" \
-      "${setting[--speculative-eagle-topk]:-not set}" \
-      "${setting[--speculative-num-draft-tokens]:-not set}" \
-      "${setting[--speculative-adaptive-config]:-built-in table}"
+    case "${setting[--speculative-algorithm]:-}" in
+      DFLASH)
+        # DFLASH adaptation is fixed batch-size width routing, not the
+        # acceptance-driven MTP loop: the launch line carries the widest routed
+        # width and the policy file picks the width per batch size.
+        printf '  Speculation: DFLASH fixed-width routing (launch width steps=%s | draft tokens=%s; policy %s)\n' \
+          "${setting[--speculative-num-steps]:-not set}" \
+          "${setting[--speculative-num-draft-tokens]:-not set}" \
+          "${setting[--speculative-adaptive-config]:-built-in table}"
+        ;;
+      *)
+        # The launch line names the policy maximum; the runtime picks the width
+        # per batch from the adaptive config file, so do not report a static one.
+        printf '  Speculation: adaptive MTP up to steps=%s | top-k=%s | draft tokens=%s (policy %s)\n' \
+          "${setting[--speculative-num-steps]:-not set}" \
+          "${setting[--speculative-eagle-topk]:-not set}" \
+          "${setting[--speculative-num-draft-tokens]:-not set}" \
+          "${setting[--speculative-adaptive-config]:-built-in table}"
+        ;;
+    esac
   else
     printf '  Speculation: steps=%s | top-k=%s | draft tokens=%s\n' \
       "${setting[--speculative-num-steps]:-not set}" \

@@ -266,11 +266,73 @@ def test_launcher_default_startup_keeps_the_script_own_nixl_config(tmp_path):
         str(nixl),
     )
     assert result.returncode == 0, result.stderr
-    assert argv[-3:] == ["exec", "bash", "/config/start-flash-next-frspec.sh"]
+    assert argv[-3:] == ["exec", "bash", "/config/start-flash-next-dflash2.sh"]
     assert values_after(argv, "--volume")[0] == f"{CONFIGS}:/config:ro"
     assert values_after(argv, "--volume")[3] == f"{nixl}:/nixl"
     # Nothing was named, so the selected script keeps the config it names.
     assert "-e" not in argv
+
+
+def test_the_baked_image_command_starts_the_routed_dflash2_recipe(tmp_path):
+    # A bare container start hands the Dockerfile CMD to the entry point, so the
+    # baked default has to name the qualified profile. An explicit legacy choice
+    # still has to reach its own recipe.
+    dockerfile = (ENTRYPOINT.parent / "Dockerfile").read_text()
+    cmd_lines = [line for line in dockerfile.splitlines() if line.startswith("CMD [")]
+    assert cmd_lines == ['CMD ["next-dflash2"]'], cmd_lines
+
+    def dispatch(profile_argument: str):
+        root, capture, env_capture = image_root(tmp_path)
+        capture.unlink(missing_ok=True)
+        env_capture.unlink(missing_ok=True)
+        cache = tmp_path / "cache root"
+        nixl = tmp_path / "nixl root"
+        for directory in (cache, nixl):
+            directory.mkdir(exist_ok=True)
+        result = subprocess.run(
+            ["bash", str(ENTRYPOINT), profile_argument],
+            env=clean_env(
+                REPO_ROOT=str(root),
+                CACHE_BASE=str(cache),
+                NIXL_STORAGE_BASE=str(nixl),
+                SGLANG_CAPTURE=str(capture),
+                SGLANG_ENV_CAPTURE=str(env_capture),
+                HOME=str(tmp_path / "home"),
+                TARGET_MODEL=str(target_checkpoint(tmp_path)),
+                DRAFT_MODEL=str(draft_checkpoint(tmp_path)),
+                **{"FAKE_CUDA_DEVICES": "2", **qualified_defaults()},
+            ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        argv = capture.read_text().splitlines() if capture.exists() else []
+        return result, argv
+
+    result, argv = dispatch("next-dflash2")
+    assert result.returncode == 0, result.stderr
+    assert argv_after(argv, "--speculative-algorithm") == "DFLASH"
+    assert argv_after(argv, "--speculative-num-steps") == "5"
+    assert argv_after(argv, "--speculative-num-draft-tokens") == "6"
+    assert argv_after(argv, "--speculative-adaptive-config").endswith(
+        "adaptive-dflash2.json"
+    )
+    assert argv_after(argv, "--speculative-token-map").endswith("flash-next-64k.pt")
+    assert "--cuda-graph-bs-decode" not in argv
+
+    result, argv = dispatch("next")
+    # The FR-Spec recipe pins the qualified target tokenizer, so the stand-in
+    # checkpoint stops it inside that recipe — which is the dispatch proof, and
+    # the server line is never reached.
+    assert result.returncode != 0
+    assert "qualified FR-Spec tokenizer" in result.stderr, result.stderr
+    assert argv == []
+
+    result, argv = dispatch("next-plain")
+    assert result.returncode == 0, result.stderr
+    assert argv_after(argv, "--speculative-algorithm") == "NEXTN"
+    assert argv_after(argv, "--speculative-num-steps") == "7"
+    assert "--speculative-token-map" not in argv
 
 
 def test_launcher_resolves_relative_host_paths(tmp_path):
@@ -509,6 +571,10 @@ def prepared_config(
                 f'TARGET_MODEL="{target}"',
             ),
             ('TARGET_MODEL="/models/Qwen3.8-27B-FP8"', f'TARGET_MODEL="{target}"'),
+            (
+                'DRAFT_MODEL="/models/incoai-Qwen3.8-Flash-Next-DFlash2"',
+                f'DRAFT_MODEL="{draft}"',
+            ),
             ('DRAFT_MODEL="/models/Qwen3.8-27B-DFlash2"', f'DRAFT_MODEL="{draft}"'),
             ("NIXL=on\n", f"NIXL={nixl}\n"),
         ):
@@ -530,12 +596,13 @@ def prepared_config(
 
 def launch(
     tmp_path: Path,
-    startup: Path,
+    startup: Path | None,
     *,
     through_entrypoint: bool = True,
     keep_nixl_root: bool = False,
     nixl_root: Path | None = None,
     env: dict | None = None,
+    profile: str | None = None,
 ):
     root, capture, env_capture = image_root(tmp_path)
     capture.unlink(missing_ok=True)
@@ -546,11 +613,14 @@ def launch(
     nixl.mkdir(exist_ok=True)
     if nixl_root is not None:
         nixl = nixl_root
-    command = (
-        ["bash", str(ENTRYPOINT), "exec", "bash", str(startup)]
-        if through_entrypoint
-        else ["bash", str(startup)]
-    )
+    if profile is not None:
+        # The built-in profile route: the entry point plus a container command,
+        # which is exactly what a bare 'docker run' of the image starts with.
+        command = ["bash", str(ENTRYPOINT), profile]
+    elif through_entrypoint:
+        command = ["bash", str(ENTRYPOINT), "exec", "bash", str(startup)]
+    else:
+        command = ["bash", str(startup)]
     result = subprocess.run(
         command,
         env=clean_env(
@@ -585,12 +655,14 @@ def test_examples_are_editable_startup_files_with_container_paths(tmp_path):
     assert (LAUNCH / "run.sh").is_file()
     assert sorted(path.name for path in CONFIGS.glob("start-*.sh")) == [
         "start-27b-dflash2.sh",
+        "start-flash-next-dflash2.sh",
         "start-flash-next-frspec.sh",
         "start-flash-next.sh",
     ]
     for name in (
         "start-flash-next.sh",
         "start-flash-next-frspec.sh",
+        "start-flash-next-dflash2.sh",
         "start-27b-dflash2.sh",
     ):
         text = (CONFIGS / name).read_text()
@@ -916,9 +988,11 @@ def test_forwarded_settings_survive_the_mounted_script_for_every_profile(tmp_pat
         "export SGLANG_FORWARD_UNKNOWN_TOOLS=" '"${SGLANG_FORWARD_UNKNOWN_TOOLS:-true}"'
     ) in frspec
     assert "export SGLANG_FORWARD_UNKNOWN_TOOLS=true" not in frspec
-    # The 27b recipe pins its own capacity, TP and PLE placement in the launch
+    # The 27b recipe pins its capacity pair, TP and PLE placement in the launch
     # line, so an ambient value there is decoration: the saved settings must be
-    # refused up front (penny_config's profile check), not quietly ignored.
+    # refused up front (penny_config's profile check), not quietly ignored. Its
+    # KV cap is the exception — unset stays automatic and an explicit cap
+    # travels to the server.
     result, argv, server_env, _ = launch(
         tmp_path,
         RECIPES / "serve-qwen38-27b-dflash2.sh",
@@ -934,7 +1008,7 @@ def test_forwarded_settings_survive_the_mounted_script_for_every_profile(tmp_pat
     assert argv_after(argv, "--max-running-requests") == "4"
     assert argv_after(argv, "--max-mamba-cache-size") == "24"
     assert argv_after(argv, "--tp") == "1"
-    assert "--max-total-tokens" not in argv
+    assert argv_after(argv, "--max-total-tokens") == "262144"
 
 
 def test_a_generated_launch_forwards_the_saved_value_end_to_end(tmp_path):

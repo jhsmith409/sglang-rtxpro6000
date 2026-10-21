@@ -1,7 +1,7 @@
 services:
   pennyroyal:
-    image: ${PENNYROYAL_IMAGE:-ghcr.io/jpezzulli/sglang-rtxpro6000:v3.0.2}
-    command: ["${PENNYROYAL_PROFILE:-next}"]
+    image: ${PENNYROYAL_IMAGE:-ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0}
+    command: ["${PENNYROYAL_PROFILE:-next-dflash2}"]
     user: "${USER_ID:-1000}:${GROUP_ID:-1000}"
     init: true
     restart: "no"
@@ -19,7 +19,7 @@ services:
       - seccomp=unconfined
     environment:
       TARGET_MODEL: ${TARGET_MODEL:-/models/RadixArk-Qwen3.8-Flash-Next-NVFP4}
-      DRAFT_MODEL: ${DRAFT_MODEL:-/models/Qwen3.8-27B-DFlash2}
+      DRAFT_MODEL: ${DRAFT_MODEL:-/models/incoai-Qwen3.8-Flash-Next-DFlash2}
       CACHE_BASE: /cache
       NIXL_STORAGE_BASE: /nixl
       SGLANG_HICACHE_NIXL_MAX_CACHE_GB: ${SGLANG_HICACHE_NIXL_MAX_CACHE_GB:-0}
@@ -52,8 +52,11 @@ services:
       # kernels. Empty keeps the Next startup files' qualified default (1); 0
       # opts out. The 27b profile uses Triton GDN and does not read it.
       FLASHINFER_GDN_FP16_ACCUM_MMA: ${FLASHINFER_GDN_FP16_ACCUM_MMA:-}
-      MAX_RUNNING_REQUESTS: ${MAX_RUNNING_REQUESTS:-4}
-      MAX_MAMBA_CACHE_SIZE: ${MAX_MAMBA_CACHE_SIZE:-24}
+      # Capacity pair: unset means "the selected profile's recipe decides", so
+      # next-dflash2 gets its qualified 6/36 and the NEXTN recipes keep 4/24.
+      # A named value here is an explicit operator choice and still wins.
+      MAX_RUNNING_REQUESTS: ${MAX_RUNNING_REQUESTS:-}
+      MAX_MAMBA_CACHE_SIZE: ${MAX_MAMBA_CACHE_SIZE:-}
       MAX_TOTAL_TOKENS: ${MAX_TOTAL_TOKENS:-}
     volumes:
       - type: bind

@@ -65,7 +65,10 @@ class StartupSummaryTest(unittest.TestCase):
             },
         )
 
-        self.assertIn("Profile: Qwen3.8 Flash-Next / native NEXTN MTP | TP: 2", output)
+        self.assertIn(
+            "Profile: Qwen3.8 Flash-Next / native NEXTN MTP (deprecated) | TP: 2",
+            output,
+        )
         self.assertIn("Model: /models/Flash Next [qualified]", output)
         self.assertIn(
             "FR-Spec: on | Online FP8: rowwise FP8 (explicit) | KV dtype: fp8_e4m3",
@@ -151,7 +154,10 @@ class StartupSummaryTest(unittest.TestCase):
         self.assertIn("PLE: NVMe (prepared model overlay)", output)
         self.assertIn("Media preprocessing: main GPU (cuda:0)", output)
 
-    def test_dflash_marks_ple_and_online_fp8_not_applicable(self):
+    def test_dflash_labels_come_from_the_launch_not_the_algorithm(self):
+        # PLE and the resident rowwise-FP8 head are launch facts, so a DFLASH
+        # launch reports them the same way a NEXTN launch does; the recipe-only
+        # 27B default names its profile instead of claiming FR-Spec.
         output = self.summary(
             "serve",
             "--model-path=/models/target model",
@@ -165,14 +171,45 @@ class StartupSummaryTest(unittest.TestCase):
             },
         )
 
-        self.assertIn("Profile: Qwen3.8-27B / DFlash2", output)
+        self.assertIn("Profile: Qwen3.8-27B / DFlash2 (DFLASH, no FR-Spec)", output)
         self.assertIn("Model: /models/target model", output)
         self.assertIn("Draft model: /models/draft model", output)
         self.assertIn(
-            "FR-Spec: off | Online FP8: not applicable | KV dtype: fp8_e4m3", output
+            "FR-Spec: off | Online FP8: rowwise FP8 (explicit) | KV dtype: fp8_e4m3",
+            output,
         )
         self.assertIn("Draft KV dtype: fp8_e5m2", output)
-        self.assertIn("PLE: not applicable", output)
+        self.assertIn("PLE: NVMe (prepared model overlay)", output)
+
+    def test_dflash_routing_and_map_are_named(self):
+        # The routed Flash-Next DFlash2 launch: algorithm, FR-Spec map, resident
+        # FP8 and PLE all have to be legible in the startup summary.
+        output = self.summary(
+            "serve",
+            "--model-path=/models/next",
+            "--speculative-algorithm=DFLASH",
+            "--speculative-num-steps=5",
+            "--speculative-num-draft-tokens=6",
+            "--speculative-adaptive",
+            "--speculative-adaptive-config=/cfg/adaptive-dflash2.json",
+            "--speculative-token-map=/cfg/frspec/flash-next-64k.pt",
+            "--ple-offload-embedding",
+            env={
+                "PENNYROYAL_PROFILE_LABEL": "Flash-Next NVFP4 + DFlash2 / FR-Spec",
+                "ONLINE_FP8_PRECISION": "rowwise_fp8",
+            },
+        )
+        self.assertIn("Profile: Flash-Next NVFP4 + DFlash2 / FR-Spec", output)
+        self.assertIn("FR-Spec: on", output)
+        self.assertIn("FR-Spec token map: /cfg/frspec/flash-next-64k.pt", output)
+        self.assertIn("Online FP8: rowwise FP8 (automatic)", output)
+        self.assertIn("PLE: host RAM", output)
+        self.assertIn("DFLASH fixed-width routing", output)
+        self.assertIn(
+            "launch width steps=5 | draft tokens=6; policy /cfg/adaptive-dflash2.json",
+            output,
+        )
+        self.assertNotIn("adaptive MTP", output)
 
     def test_all_launcher_argv_match_the_base_exec_blocks(self):
         # The comparison needs the base commit's blobs. A shallow or partial
@@ -225,8 +262,36 @@ class StartupSummaryTest(unittest.TestCase):
                 self.assertIn("Pennyroyal startup — requested settings", current_output)
                 # The approved 3.0 default swaps the Next launchers' static
                 # NEXTN 3/1/4 profile for the adaptive one; outside that one
-                # segment the two argvs must stay byte-identical.
-                self.assertEqual(self._adaptive_30_default(base_argv), current_argv)
+                # segment, and outside the one memory-fraction value the
+                # retained-MTP update is allowed to carry, the two argvs must
+                # stay byte-identical.
+                self.assertEqual(
+                    self._retained_frspec_fraction(
+                        self._adaptive_30_default(base_argv), launcher
+                    ),
+                    self._retained_frspec_fraction(current_argv, launcher),
+                )
+
+    # The FR-Spec native-MTP recipe is the one launcher whose static fraction is
+    # an accepted, recorded change rather than a regression: .981 as booted in the
+    # v2.3-v3.0.2 records, and the measured .97 that the retained-MTP
+    # configuration update keeps for it. Any other value still has to match the
+    # base argv literally, and the 27B recipe's .92 is never normalised.
+    RETAINED_FRSPEC_FRACTIONS = ("0.981", "0.97")
+
+    @classmethod
+    def _retained_frspec_fraction(cls, argv: list[str], launcher: str) -> list[str]:
+        if (
+            launcher != "serve-flash-next-frspec.sh"
+            or "--mem-fraction-static" not in argv
+        ):
+            return argv
+        at = argv.index("--mem-fraction-static")
+        if argv[at + 1] not in cls.RETAINED_FRSPEC_FRACTIONS:
+            return argv
+        updated = list(argv)
+        updated[at + 1] = "<retained native fraction>"
+        return updated
 
     @staticmethod
     def _adaptive_30_default(argv: list[str]) -> list[str]:
@@ -318,7 +383,17 @@ class StartupSummaryTest(unittest.TestCase):
         )
         lines.extend(
             (
-                "TOKEN_CAP_ARGS=(--max-total-tokens 824384)",
+                # The extracted blocks end with the shared startup summary, so
+                # the fixture loads that library: without it the current blocks
+                # fail on a missing function, and with it the summary output the
+                # recipes promise is what this check observes.
+                f"source {shlex.quote(str(SUMMARY))}",
+                # No KV-token preset any more: an unset cap expands to nothing in
+                # the extracted blocks, so the comparison covers the real default
+                # launch. The explicit-cap path is checked by the recipe
+                # launches in test_request_capacity.py and
+                # test_frspec_kv_capacity.py.
+                "TOKEN_CAP_ARGS=()",
                 "PLE_ARGS=(--ple-offload-embedding)",
                 # The disk tier is on by default, and the recipe now keeps the
                 # three NIXL FILE storage-backend arguments in one guarded array

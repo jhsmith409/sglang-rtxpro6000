@@ -703,7 +703,8 @@ class DiscoveryTests(FixtureMixin):
 
     def test_missing_file_uses_defaults_instead_of_failing(self):
         config = pc.load_config("native", self.base / "nope.env", {}, self.repo)
-        self.assertEqual(config.profile, "next")
+        # New setups default to the routed Flash-Next DFlash2 profile.
+        self.assertEqual(config.profile, "next-dflash2")
         self.assertEqual(config.values, {})
 
     def test_unknown_profile_is_rejected(self):
@@ -1720,7 +1721,9 @@ class ContainerPlanTests(FixtureMixin):
         )
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIn(str(self.host_root), run.stdout)
-        self.assertIn("/models/Qwen3.8-27B-DFlash2", run.stdout)
+        # The compose default draft follows the default profile (next-dflash2);
+        # the 27b command above still overrides everything it saves.
+        self.assertIn("/models/incoai-Qwen3.8-Flash-Next-DFlash2", run.stdout)
 
     def test_models_root_needs_readability_not_writability(self):
         readonly_root = self.base / "readonly models"
@@ -1894,6 +1897,43 @@ class ContainerPlanTests(FixtureMixin):
         )
         run_sh = self.generated(plan)[self.base / "launch out" / "run.sh"]
         self.assertIn("  -e SGLANG_HICACHE_TORCH_PINNED_ALLOC=false\n", run_sh)
+
+    def test_a_default_container_save_generates_the_routed_dflash2_launch(self):
+        # The default profile's generated launch is the routed DFlash2 pair:
+        # run.sh points at the new startup file with the release default image,
+        # and that file carries the qualified width, FR-Spec map, policy and
+        # graph settings — with the retired block-width knob gone.
+        (self.host_root / "incoai-Qwen3.8-Flash-Next-DFlash2").mkdir()
+        plan = self.container_plan(self.base_values(), profile="next-dflash2")
+        self.assertEqual([i.message for i in plan.errors], [])
+        files = self.generated(plan)
+        run_sh = files[self.base / "launch out" / "run.sh"]
+        self.assertIn(
+            'STARTUP="$SCRIPT_DIR/config/start-flash-next-dflash2.sh"', run_sh
+        )
+        self.assertIn(pc.DEFAULT_IMAGE, run_sh)
+        startup = files[
+            self.base / "launch out" / "config" / "start-flash-next-dflash2.sh"
+        ]
+        self.assertIn("--speculative-token-map", startup)
+        self.assertIn("--speculative-adaptive", startup)
+        self.assertIn("--disable-prefill-cuda-graph", startup)
+        self.assertNotIn("--cuda-graph-bs", startup)
+        self.assertNotIn("SPECULATIVE_NUM_DRAFT_TOKENS", startup)
+        # The draft path the generated file states is the Flash-Next draft.
+        self.assertIn("DRAFT_MODEL=/models/incoai-Qwen3.8-Flash-Next-DFlash2", startup)
+
+    def test_a_saved_block_width_is_named_not_ignored(self):
+        # 3.0-era files may carry SPECULATIVE_NUM_DRAFT_TOKENS for this profile.
+        # Routing has no such knob, so the plan refuses it with a reason.
+        (self.host_root / "incoai-Qwen3.8-Flash-Next-DFlash2").mkdir()
+        plan = self.container_plan(
+            {**self.base_values(), "SPECULATIVE_NUM_DRAFT_TOKENS": "4"},
+            profile="next-dflash2",
+        )
+        messages = self.messages(plan, "error")
+        self.assertIn("SPECULATIVE_NUM_DRAFT_TOKENS=4", messages)
+        self.assertIn("is not a setting of the next-dflash2 profile", messages)
 
 
 class ContainerLaunchGenerationTests(FixtureMixin):
@@ -2178,11 +2218,12 @@ class ContainerLaunchGenerationTests(FixtureMixin):
 
     def test_unsupported_27b_settings_are_refused_not_ignored(self):
         # The 27b recipe pins 4/24, TP1 and RAM PLE in its own launch line, so a
-        # saved choice there would be forwarded and then quietly dropped.
+        # saved choice there would be forwarded and then quietly dropped. Its KV
+        # cap is the opposite case: unset means automatic sizing and a saved cap
+        # reaches the server, so MAX_TOTAL_TOKENS is not refused any more.
         for name, value in (
             ("MAX_RUNNING_REQUESTS", "8"),
             ("MAX_MAMBA_CACHE_SIZE", "48"),
-            ("MAX_TOTAL_TOKENS", "262144"),
             ("TP_SIZE", "2"),
             ("PENNY_PLE_BACKEND", "nvme"),
         ):
@@ -2193,10 +2234,18 @@ class ContainerLaunchGenerationTests(FixtureMixin):
                 messages = self.messages(plan, "error")
                 self.assertIn(f"{name}={value}", messages)
                 self.assertIn("is not a setting of the 27b profile", messages)
-                if value != "262144":
-                    # Where the recipe does have a literal, name it: the
-                    # operator learns what actually runs.
-                    self.assertIn("launches with", messages)
+                # Every key here has a literal in the recipe, so the operator
+                # learns what actually runs.
+                self.assertIn("launches with", messages)
+
+    def test_27b_honours_an_explicit_kv_cap(self):
+        # Auto sizing is the default; a deliberate cap survives to the launch.
+        plan = self.container_plan(
+            {**self.base_values(), "MAX_TOTAL_TOKENS": "262144"}, profile="27b"
+        )
+        self.assertEqual(plan.errors, [])
+        run_sh = self.generated(plan)[self.base / "launch out" / "run.sh"]
+        self.assertIn("  -e MAX_TOTAL_TOKENS=262144", run_sh)
 
     def test_27b_accepts_what_its_recipe_actually_uses(self):
         # Compatible saved values (the profile's own numbers) and an unset key

@@ -1,9 +1,11 @@
 # Run Penny Royal on RTX PRO 6000 Blackwell
 
 This is the native launch guide for Penny Royal. The same source runs
-Qwen3.8-27B FP8 with DFlash2 or Qwen3.8 Flash-Next NVFP4 with native NEXTN and
-FR-Spec on NVIDIA RTX PRO 6000 Blackwell (SM120), TP1 or TP2. Both profiles
-serve an OpenAI-compatible model named `pennyroyal`.
+Qwen3.8 Flash-Next NVFP4 with the separate DFlash2 draft and FR-Spec, or
+Qwen3.8-27B FP8 with its own DFlash2 draft, on NVIDIA RTX PRO 6000 Blackwell
+(SM120), TP1 or TP2. The Flash-Next native NEXTN MTP path still launches, but it
+is deprecated: it keeps its existing recipe and gets no further updates or
+testing. Both profiles serve an OpenAI-compatible model named `pennyroyal`.
 
 Build the release with [BUILD.md](BUILD.md) first. Container users should
 follow the separate [container guide](docker/pennyroyal/README.md).
@@ -18,10 +20,12 @@ Blackwell at TP1 or TP2; optional Ampere/Ada sidecar image processing is separat
 from the inference cards.
 
 Start with [Common setup](#common-setup), then choose
-[Flash-Next with FR-Spec](#launch-flash-next-with-fr-spec), the
-[optional non-FR alternative](#launch-flash-next-without-fr-spec-alternative), or
-[27B with DFlash2](#launch-27b-with-dflash2). Stop and restart the server after
-changing configuration.
+[Flash-Next with DFlash2](#launch-flash-next-with-dflash2) — the default newly
+generated setup — [27B with DFlash2](#launch-27b-with-dflash2), or one of the
+deprecated native-MTP recipes,
+[Flash-Next with FR-Spec](#launch-flash-next-with-fr-spec) and the
+[optional non-FR alternative](#launch-flash-next-without-fr-spec-alternative).
+Stop and restart the server after changing configuration.
 
 The optional [beta configurator](CONFIGURE.md) can write the settings for you.
 It creates a new timestamped file and prints the exact check and launch
@@ -75,8 +79,11 @@ the launcher. Stop and restart the server after changing them.
 
 ## Launch Flash-Next with FR-Spec
 
-This is the recommended Flash-Next recipe. Native NEXTN MTP is part of the
-target checkpoint, so only the target model is required:
+**Deprecated native MTP.** This recipe still works exactly as before and its
+recipe is unchanged; it just gets no further updates or testing, and new setups
+start on [Flash-Next with DFlash2](#launch-flash-next-with-dflash2) instead.
+Native NEXTN MTP is part of the target checkpoint, so only the target model is
+required:
 
 ```bash
 cd "$REPO_ROOT"
@@ -392,8 +399,9 @@ graphs in the startup output.
 
 ## Launch Flash-Next without FR-Spec (alternative)
 
-This recipe keeps the same target, context, KV/state pools, native NEXTN,
-HiCache, and NIXL configuration while omitting the reduced-vocabulary map:
+**Deprecated native MTP**, like the FR-Spec recipe above. This recipe keeps the
+same target, context, KV/state pools, native NEXTN, HiCache, and NIXL
+configuration while omitting the reduced-vocabulary map:
 
 ```bash
 cd "$REPO_ROOT"
@@ -411,6 +419,52 @@ export TARGET_MODEL=/path/to/RadixArk-Qwen3.8-Flash-Next-NVFP4
 | Linear attention | Explicit FlashInfer GDN decode/prefill, FP16-accumulate MMA mode |
 
 The online-FP8 and PLE-placement options also apply to this recipe.
+
+## Launch Flash-Next with DFlash2
+
+`PENNYROYAL_PROFILE=next-dflash2` is the default Flash-Next choice for newly
+generated setup. It runs the same accepted NVFP4 target and the bundled FR-Spec
+64K token map against the separate
+`incoai/Qwen3.8-Flash-Next-DFlash2` draft — its own download, next to the
+target:
+
+```bash
+hf download incoai/Qwen3.8-Flash-Next-DFlash2 \
+  --local-dir /path/to/incoai-Qwen3.8-Flash-Next-DFlash2
+```
+
+The FR-Spec map and the width-routing policy are already in this repository
+(`configs/pennyroyal/frspec/flash-next-64k.pt` and
+`configs/pennyroyal/adaptive-dflash2.json`), so the container path needs no extra
+files beyond the launch scripts.
+
+```bash
+cd "$REPO_ROOT"
+export TARGET_MODEL=/path/to/RadixArk-Qwen3.8-Flash-Next-NVFP4
+export DRAFT_MODEL=/path/to/incoai-Qwen3.8-Flash-Next-DFlash2
+"$REPO_ROOT/configs/pennyroyal/serve-flash-next-dflash2.sh"
+```
+
+| Setting | Flash-Next/DFlash2 value |
+|---|---|
+| Target | ModelOpt NVFP4 weights and activations on selected Linear modules |
+| Target output head | Rowwise FP8 E4M3 with one FP32 scale per channel (the online-FP8 conversion the target's own logits path uses; the draft reuses it) |
+| Draft weights | BF16, unquantized (`--speculative-draft-model-quantization unquant`) |
+| Speculation | DFLASH at steps 5 / 6 draft tokens, adaptive with the bundled fixed-width policy `configs/pennyroyal/adaptive-dflash2.json`: block 6 for a single running request, block 4 for every batch of two or more; the FR-Spec map `configs/pennyroyal/frspec/flash-next-64k.pt` (65,536 rows) |
+| CUDA graphs | Prefill CUDA graphs disabled (`--disable-prefill-cuda-graph`); decode buckets stay on the runtime's own spec-decode list, so the single-request width keeps its bucket and the wider concurrent batches keep theirs |
+| Target features | Completed layers 5, 15, 25, 35 and 45, averaged over the four hyper-connection streams (5 x 2,560 into the draft's `fc`) |
+| Draft context | 2,048-token trained window; 524,288-position extension from this draft's own `rope_theta` 10000 and 262,144-token base |
+| Target verification | Triton linear-attention verify (`--linear-attn-verify-backend triton`) |
+| State and host cache | 36 Mamba slots for 6 requests; RecoverSSM `none`; 32 GB HiCache; NIXL POSIX |
+
+This is the qualified Flash-Next path on RTX PRO 6000 at TP1: resident rowwise
+FP8, the FR-Spec map, and the fixed 6-at-C1 / 4-at-C2-and-above routing described
+above. The model card's own numbers were taken against the official FP8 target
+on one GB300 at block 4, so they still say nothing about this NVFP4, SM120,
+six-request stack — read your resolved token pool and request admission in the
+startup output on your first boot. TP1 is the qualified default; TP2 is expected
+to work; it has not been tested on two-GPU hardware, and the launcher's device
+guard still refuses a TP size the visible GPUs cannot serve.
 
 ## CPU, model-GPU, or secondary-GPU media preprocessing
 

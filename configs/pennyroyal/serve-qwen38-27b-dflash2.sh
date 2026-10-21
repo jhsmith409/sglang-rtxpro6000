@@ -63,6 +63,22 @@ MAMBA_TRACK_INTERVAL=256
 DRAFT_TOKENS=8
 DRAFT_WINDOW_SIZE=2048
 
+# KV pool sizing is automatic unless the operator supplies an explicit cap:
+# unset or blank MAX_TOTAL_TOKENS lets the engine size the pool from the memory
+# it profiles, inside the 0.92 static fraction this recipe sets. A chosen value
+# must be positive and page-64-aligned and travels as --max-total-tokens, so an
+# explicit cap survives the way it does on the Flash-Next profiles.
+TOKEN_CAP_ARGS=()
+if [[ -n "${MAX_TOTAL_TOKENS:-}" ]]; then
+  if [[ ! "$MAX_TOTAL_TOKENS" =~ ^[0-9]+$ ]] || (( 10#$MAX_TOTAL_TOKENS <= 0 )); then
+    echo "MAX_TOTAL_TOKENS must be a positive integer" >&2; exit 1
+  fi
+  if (( 10#$MAX_TOTAL_TOKENS % PAGE_SIZE != 0 )); then
+    echo "MAX_TOTAL_TOKENS must be aligned to page size $PAGE_SIZE" >&2; exit 1
+  fi
+  TOKEN_CAP_ARGS=(--max-total-tokens "$MAX_TOTAL_TOKENS")
+fi
+
 for path in "${required_executables[@]}"; do
   [[ -x "$path" ]] || { echo "Required executable missing: $path" >&2; exit 1; }
 done
@@ -167,6 +183,7 @@ launch_args=(serve \
   --served-model-name pennyroyal --host 0.0.0.0 --port 8001 --tp "$TP_SIZE" \
   --dtype "$COMPUTE_DTYPE" --kv-cache-dtype "$TARGET_KV_DTYPE" \
   --context-length "$CONTEXT_LENGTH" --page-size "$PAGE_SIZE" \
+  "${TOKEN_CAP_ARGS[@]}" \
   --json-model-override-args "$TARGET_OVERRIDES" \
   --max-running-requests 4 --sleep-on-idle --mem-fraction-static 0.92 \
   --max-mamba-cache-size 24 --mamba-ssm-dtype "$MAMBA_SSM_DTYPE" \

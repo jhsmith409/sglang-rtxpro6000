@@ -173,12 +173,15 @@ The recorded `nixl-cu13==1.4.0` wheel SHA-256 was
 ## Reference and measured checkpoints
 
 Weights are distributed separately. Download the reference targets and the
-27B draft as needed:
+Flash-Next or 27B draft as needed:
 
 ```bash
 hf download RadixArk/Qwen3.8-Flash-Next-NVFP4 \
   --revision 7b719225242aacd3dbd3f9407468c2ee9a9d2594 \
   --local-dir /path/to/flash-next
+
+hf download incoai/Qwen3.8-Flash-Next-DFlash2 \
+  --local-dir /path/to/flash-next-draft
 
 hf download Qwen/Qwen3.8-27B-FP8 \
   --local-dir /path/to/qwen38-27b-target

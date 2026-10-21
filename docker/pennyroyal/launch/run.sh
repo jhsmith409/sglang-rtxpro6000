@@ -19,7 +19,7 @@
 #
 # Usage: ./run.sh [option]...
 # Every option also has a setting above; the option wins.
-#   --startup PATH             startup script to run (default: config/start-flash-next-frspec.sh)
+#   --startup PATH             startup script to run (default: config/start-flash-next-dflash2.sh)
 #   --nixl-config PATH         NIXL config to use; omit to keep the one your
 #                              startup script names inside the config directory
 #   --no-nixl                  skip the /nixl mount, for a startup script whose
@@ -27,7 +27,7 @@
 #                              The two choices are separate and must agree.
 #   --nvme-ple                 keep the io_uring-permitting seccomp setting for the
 #                              independent NVMe PLE reader while NIXL is off
-#   --image NAME               container image (default: v3.0.2)
+#   --image NAME               container image (default: v3.1.0)
 #   --port HOST_PORT           published server port (default: 8001)
 #   --gpu IDS                  GPU id list, e.g. 0 or 0,1 (default: 0)
 #   --models DIR               host models root, mounted read-only at /models
@@ -45,8 +45,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Your host settings ------------------------------------------------------
-IMAGE="${PENNYROYAL_IMAGE:-ghcr.io/jpezzulli/sglang-rtxpro6000:v3.0.2}"
-STARTUP="${PENNYROYAL_STARTUP:-$SCRIPT_DIR/config/start-flash-next-frspec.sh}"
+IMAGE="${PENNYROYAL_IMAGE:-ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0}"
+STARTUP="${PENNYROYAL_STARTUP:-$SCRIPT_DIR/config/start-flash-next-dflash2.sh}"
 # Empty means: use the NIXL config the selected startup script names itself.
 NIXL_CONFIG="${PENNYROYAL_NIXL_CONFIG:-}"
 HOST_MODELS_ROOT="${HOST_MODELS_ROOT:-/srv/models}"

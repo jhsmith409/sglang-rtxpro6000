@@ -69,14 +69,24 @@ and manage the files yourself. Restart the server to apply changed settings.
 
 ## What the settings mean
 
-- **Profile:** Flash-Next with native MTP and FR-Spec (`next`), the optional
-  non-FR alternative (`next-plain`), or 27B with its DFlash2 draft. FR-Spec and
-  adaptive MTP work together; they are not competing profile choices. The 27B
-  profile needs both model folders.
+- **Profile:** Flash-Next with the DFlash2 draft and the FR-Spec map
+  (`next-dflash2`, the default for new setups), 27B with its DFlash2 draft
+  (`27b`), or the two deprecated native-MTP Flash-Next profiles (`next` with
+  FR-Spec, `next-plain` without it). The deprecated profiles keep their
+  existing recipes and still launch; they receive no further updates or
+  testing. The two DFlash2 profiles need both model folders. FR-Spec and
+  adaptive width routing work together on `next-dflash2`; they are not
+  competing profile choices. See
+  [RUN.md](RUN.md#launch-flash-next-with-dflash2) for what the routed profile
+  ships and pins.
 - **GPUs:** choose the inference device(s), TP size and optional image-processing
   device. TP2 needs two RTX PRO 6000 inference GPUs; a sidecar remains separate.
 - **HiCache:** RAM prefix-cache size in decimal GB. Profile defaults are 32 GB
   for Flash-Next and 96 GB for 27B.
+- **KV pool:** automatic on every profile — leave `MAX_TOTAL_TOKENS` blank and
+  the engine sizes the shared pool from the memory it profiles. A deliberate
+  cap is preserved and reaches the server on all four profiles; it must be
+  positive and aligned to the recipe's page size (64).
 - **NIXL:** optional disk-cache tier, on by default. Disabling it preserves GPU
   and RAM caching.
 - **NIXL disk budget:** GiB. Zero means unlimited disk budget, **not disabled**.

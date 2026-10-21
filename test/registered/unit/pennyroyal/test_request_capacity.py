@@ -75,14 +75,55 @@ def test_27b_recipe_keeps_its_own_capacity():
     assert "--max-running-requests 4" in source
 
 
-def test_compose_forwards_optional_next_capacity_with_existing_defaults():
+def test_compose_leaves_capacity_to_the_selected_profile_recipe():
     container = REPO / "docker" / "pennyroyal"
     compose = yaml.safe_load((container / "compose.yaml").read_text())
     environment = compose["services"]["pennyroyal"]["environment"]
-    assert environment["MAX_RUNNING_REQUESTS"] == "${MAX_RUNNING_REQUESTS:-4}"
-    assert environment["MAX_MAMBA_CACHE_SIZE"] == "${MAX_MAMBA_CACHE_SIZE:-24}"
+    # No literal 4/24 in the Compose file: with the default profile now
+    # next-dflash2, a hardwired 4/24 would override that recipe's qualified
+    # 6/36. The ${VAR:-} form forwards a named value untouched and an unset one
+    # as blank, which the recipes' ${VAR:-default} reads as 'not chosen'.
+    assert environment["MAX_RUNNING_REQUESTS"] == "${MAX_RUNNING_REQUESTS:-}"
+    assert environment["MAX_MAMBA_CACHE_SIZE"] == "${MAX_MAMBA_CACHE_SIZE:-}"
     assert environment["MAX_TOTAL_TOKENS"] == "${MAX_TOTAL_TOKENS:-}"
     example = (container / ".env.example").read_text()
     assert "MAX_RUNNING_REQUESTS=4\n" in example
     assert "MAX_MAMBA_CACHE_SIZE=24\n" in example
     assert "MAX_TOTAL_TOKENS=\n" in example
+
+
+def test_blank_capacity_env_falls_back_to_the_recipes_qualities():
+    # The exported-blank case a fresh Compose boot produces: the shared helper
+    # must treat it as 'not chosen' exactly like an unset variable, so each
+    # recipe's own qualified pair survives.
+    for default_pair in ("6 36", "4 24"):
+        requests, slots = default_pair.split()
+        result = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'set -euo pipefail; MAX_RUNNING_REQUESTS="${MAX_RUNNING_REQUESTS:-$1}"; '
+                'MAX_MAMBA_CACHE_SIZE="${MAX_MAMBA_CACHE_SIZE:-$2}"; '
+                "export MAX_RUNNING_REQUESTS MAX_MAMBA_CACHE_SIZE; "
+                'source "$3/request-capacity.sh"; '
+                'printf "%s %s\\n" "$MAX_RUNNING_REQUESTS" "$MAX_MAMBA_CACHE_SIZE"',
+                "bash",
+                requests,
+                slots,
+                str(CONFIGS),
+            ],
+            env={
+                **{
+                    k: v
+                    for k, v in os.environ.items()
+                    if k not in ("MAX_RUNNING_REQUESTS", "MAX_MAMBA_CACHE_SIZE")
+                },
+                "MAX_RUNNING_REQUESTS": "",
+                "MAX_MAMBA_CACHE_SIZE": "",
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == default_pair
