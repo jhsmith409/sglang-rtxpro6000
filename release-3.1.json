@@ -3,7 +3,7 @@
   "version": "3.1.0",
   "status": {
     "publication_approved": false,
-    "source_publication": "Original runtime and setup PRs are merged. Final configuration PRs 102\u2013104 are reviewed and pending integration with these release documents.",
+    "source_publication": "Runtime, setup and final configuration PRs are merged; release documents are prepared.",
     "container": "pending",
     "note": "Release tag, versioned image and GitHub release await final approval and the candidate image check; the planned version is v3.1.0 and no tag exists yet. The reused superseded image build (0077) is not the final artifact."
   },
@@ -16,10 +16,15 @@
     "release_tag": "pennyroyal-v3.1.0",
     "release_url": "https://github.com/jpezzulli/sglang-rtxpro6000/releases/tag/pennyroyal-v3.1.0",
     "published_revision": null,
-    "merged_runtime_and_setup_revision": "d5886cc07b3bd4e05ff6a350f6a59a9df7f472b8",
+    "merged_runtime_and_setup_revision": "8d0a0a3e53a93590417a654fe27f52f4e2f11f8e",
     "accepted_setup_pr": 94,
     "accepted_setup_head": "6407975420d57859e54fa94ff71263b20f95fda9",
-    "accepted_final_settings_revision": "8d120844fccb48bdb31c833f3722801cf56431a1"
+    "accepted_final_settings_revision": "8d120844fccb48bdb31c833f3722801cf56431a1",
+    "final_configuration_prs": [
+      102,
+      103,
+      104
+    ]
   },
   "container": {
     "image": "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0",
