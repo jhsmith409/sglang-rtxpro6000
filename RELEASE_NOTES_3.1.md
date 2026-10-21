@@ -68,6 +68,7 @@ sampling. Full conditions and source labels are in
 |---|---:|---:|
 | Flash-Next DFlash2 — presentation workflow (agentic), C1 W6 (final candidate source `a60f442`) | **194.56** | **421.35** |
 | Flash-Next — coding flow, C1 W6 (`5ca3f39`) | 235.60 | 417.50 |
+| Flash-Next DFlash2 — single request, C1 W6 (current default) | **228.44** | **336.20** |
 | Flash-Next — single request, C1 W4 (`5ca3f39`) | 214.18 | 306.44 |
 | Flash-Next — full six-request batch, aggregate, W4 (`5ca3f39`) | 566.14 | 657.52 |
 | 27B DFlash2 — single request, fixed W8 (`27f9eaa`) | 133.06 | 232.07 |

@@ -139,6 +139,7 @@ other rows keep the source and width of the screen that recorded them.
 |---|---:|---:|
 | Presentation workflow (agentic), C1 W6 | **194.56** | **421.35** |
 | Coding flow, C1 W6 | **235.60** | **417.50** |
+| Single request, C1 W6 (current default) | **228.44** | **336.20** |
 | Single request, C1 fixed W4 | 214.18 | 306.44 |
 | Six concurrent requests, aggregate, fixed W4 | 566.14 | 657.52 |
 

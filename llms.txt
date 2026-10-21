@@ -78,12 +78,13 @@ tool workflow.
 Current Flash-Next results on one RTX PRO 6000: the completed five-slide
 presentation workflow (agentic) at C1 with the block-6 width on the final
 candidate (`a60f442`) recorded 194.56 tok/s mean / 421.35 sampled peak; the
-coding flow at C1 W6 recorded 235.60 / 417.50 (`5ca3f39`); the regular
-single-request screen at C1 with fixed W4 recorded 214.18 / 306.44; the full
-six-request batch (aggregate, W4) recorded 566.14 / 657.52. Current 27B
-results at fixed W8 (`27f9eaa`): 133.06 / 232.07 single request, 459.74 /
-570.73 full four-request aggregate. Each row keeps its recorded source and
-width label; see RESULTS.md for the exact conditions.
+coding flow at C1 W6 recorded 235.60 / 417.50 (`5ca3f39`); the current-default
+normal single-request screen at C1 W6 recorded 228.44 / 336.20 (DFlash2 +
+FR-Spec); the regular single-request screen at C1 with fixed W4 recorded 214.18
+/ 306.44; the full six-request batch (aggregate, W4) recorded 566.14 / 657.52.
+Current 27B results at fixed W8 (`27f9eaa`): 133.06 / 232.07 single request,
+459.74 / 570.73 full four-request aggregate. Each row keeps its recorded source
+and width label; see RESULTS.md for the exact conditions.
 
 The reasoning suite scored 93.46/100 (Flash-Next) and 96.94/100 (27B) with
 actual answer grading on the qualified sources; extended or repetitive

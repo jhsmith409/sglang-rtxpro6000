@@ -54,6 +54,7 @@ was one natural xhigh workflow. The earlier recorded presentation averaged
 |---|---:|---:|---|
 | Presentation workflow (agentic), C1 W6 | 194.56 | 421.35 | `a60f442`, DFlash2 + FR-Spec, routed W6 |
 | Coding flow, C1 W6 | 235.60 | 417.50 | `5ca3f39`, FR-Spec W6 |
+| Normal single request, C1 W6 (current default) | 228.44 | 336.20 | DFlash2 + FR-Spec, C1 W6 |
 | Regular C1 W4 | 214.18 | 306.44 | `5ca3f39`, FR-Spec fixed W4 |
 | Full six-request C6, aggregate | 566.14 | 657.52 | `5ca3f39`, FR-Spec W4, 15 full-C6 intervals |
 
