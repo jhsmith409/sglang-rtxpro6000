@@ -2,10 +2,10 @@
   "schema": "release-notes/3.1",
   "version": "3.1.0",
   "status": {
-    "publication_approved": false,
-    "source_publication": "Runtime, setup and final configuration PRs are merged; release documents are prepared.",
-    "container": "pending",
-    "note": "Release tag, versioned image and GitHub release await final approval and the candidate image check; the planned version is v3.1.0 and no tag exists yet. The reused superseded image build (0077) is not the final artifact."
+    "publication_approved": true,
+    "source_publication": "Published as pennyroyal-v3.1.0.",
+    "container": "published",
+    "note": "The versioned image is the checked build promoted by digest."
   },
   "source": {
     "base_release": "pennyroyal-v3.0.2",
@@ -15,7 +15,6 @@
     "local_integration_revision": "a0f8e27774e9d1dfd263b9c4c32870e87bf9cebf",
     "release_tag": "pennyroyal-v3.1.0",
     "release_url": "https://github.com/jpezzulli/sglang-rtxpro6000/releases/tag/pennyroyal-v3.1.0",
-    "published_revision": null,
     "merged_runtime_and_setup_revision": "8d0a0a3e53a93590417a654fe27f52f4e2f11f8e",
     "accepted_setup_pr": 94,
     "accepted_setup_head": "6407975420d57859e54fa94ff71263b20f95fda9",
@@ -28,10 +27,14 @@
   },
   "container": {
     "image": "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0",
-    "digest": null,
-    "build_url": null,
-    "state": "planned",
-    "note": "published_revision, digest and build_url are filled by the release owner only after the tag and the actual image build."
+    "digest": "sha256:758a264829475b86aca0f632fce1bd6a9bf4bfc674c2156a4de8e4843b1d97a7",
+    "source_revision": "fe5f02ccacb50d3aea10bea2044a9816292e120f",
+    "build_url": "https://github.com/jpezzulli/sglang-rtxpro6000/actions/runs/39672496242",
+    "promotion_url": "https://github.com/jpezzulli/sglang-rtxpro6000/actions/runs/39691620219",
+    "state": "published",
+    "compressed_layer_bytes": 7719976360,
+    "unpacked_image_bytes": 16027142970,
+    "note": "The image was promoted without rebuilding. The immutable source.release_tag also includes the external startup-file correction and final documentation."
   },
   "changes": [
     {
@@ -244,7 +247,16 @@
     "setup": "178 affected setup checks OK (two local skips); 66 focused pytest cases passed; final Docker CMD correction passed 22 container checks; integrated summary fixture passed eight checks. Three functional source reviews completed; final review clean. GitHub Contributor checks passed on 6407975420.",
     "setup_ci_url": "https://github.com/jpezzulli/sglang-rtxpro6000/actions/runs/39607992358",
     "flashinfer_verification": "Four existing SM120 RecoverSSM checks at each of W4 and W6 (accepted-prefix state output, 63/64/65 boundary fixture, 24-cycle continuation/prefix replay, CUDA-graph recovery); one focused W4/B6 mixed-accept and graph-replay check; checked at .04 atol/rtol. Live smoke passed C1 memory, C6 arithmetic, post-concurrency continuation, a tool call and a tool result.",
-    "native_config_integration": "PR102/PR103/PR104 configuration integration reviewed as one change: 231 CPU tests plus 69 subtests passed, 2 environment skips, pinned lint passed. Configuration validation, not a new native hardware campaign."
+    "native_config_integration": "PR102/PR103/PR104 configuration integration reviewed as one change: 231 CPU tests plus 69 subtests passed, 2 environment skips, pinned lint passed. Configuration validation, not a new native hardware campaign.",
+    "container_smoke": {
+      "date": "2026-10-21",
+      "source_revision": "fe5f02ccacb50d3aea10bea2044a9816292e120f",
+      "image_digest": "sha256:758a264829475b86aca0f632fce1bd6a9bf4bfc674c2156a4de8e4843b1d97a7",
+      "result": "Passed package checks, both-GPU visibility, HTTP readiness, ordinary generation, a valid tool call and tool-result continuation. No new GPU Xids.",
+      "profile": "Native NEXTN MTP with FR-Spec, C1/W8 and C2+/W4, external read-only startup configuration, C6/36, context 524288, HiCache32/NIXL, A4000 preprocessing, diagnostics off.",
+      "static_memory_fraction": 0.981,
+      "external_startup_correction": "The published FR-Spec startup file now matches the qualified native 0.97 recipe. Corrected launch argv captured, 22 existing container-launch tests passed, and independent review passed."
+    }
   },
   "performance": {
     "native_mean_and_sampled_peak_tok_s": {
@@ -369,10 +381,5 @@
       "contribution": "Implementation, ports and integration; John, Penny and Codex worked through the architecture, tuning, verification-backend choice and debugging together, including the width-routing decision and the memory-fraction measurements"
     }
   ],
-  "remaining": [
-    "public merge and immutable pennyroyal-v3.1.0 tag (planned; no official tag exists yet)",
-    "container image build, digest and public-link verification (the reused superseded build 0077 is not the final artifact)",
-    "John's approval of the final release notes and publication",
-    "transition of the everyday service to the published stable checkout/environment/launcher with diagnostics OFF"
-  ]
+  "remaining": []
 }

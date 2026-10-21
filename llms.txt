@@ -22,11 +22,9 @@ sizing replaces the preset cap; an explicit `MAX_TOTAL_TOKENS` override remains.
 The 27B FP8 DFlash2 profile
 is unchanged at fixed block 8. Native width routing comes from the bundled
 fixed policy `configs/pennyroyal/adaptive-next.json`, pinned by the launch
-recipes. Most runtime PRs are merged to public main; the
-release status is preparation with final publication pending:
-the planned tag is `pennyroyal-v3.1.0` and the planned image is
-`ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0`; see release-3.1.json for source
-identity and publication status.
+recipes. The published release tag is `pennyroyal-v3.1.0`; the image is
+`ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0`. See release-3.1.json for the
+source identity, checked image digest and build.
 
 ## Hardware and profiles
 
@@ -114,7 +112,7 @@ reasoning is not penalized and `ask_user` is a valid tool choice. Recorded
 deviations are listed with the measurements.
 
 - [3.1 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.1.md): maintained native-MTP default, optional Flash-Next DFlash2, fixed concurrency widths, automatic KV sizing, TP2 support and focused scheduler fixes.
-- [3.1 machine-readable release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/release-3.1.json): Source identities, settings, reused qualification and pending publication status.
+- [3.1 machine-readable release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/release-3.1.json): Source identities, settings, reused qualification and published image identity.
 - [3.0.2 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.0.2.md): Host-memory recovery, MTP switching and focused compatibility fixes.
 - [3.0.2 machine-readable release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/release-3.0.2.json): Source, qualification and container status.
 - [3.0 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.0.md): Features, performance and direct contributor acknowledgements.

@@ -13,7 +13,7 @@ The older H3PO raw table remains at its existing link.
 
 ## Penny Royal 3.1
 
-Status: release preparation and final artifact pending. Recorded October 2026
+Penny Royal 3.1.0. Recorded October 2026
 on one RTX PRO 6000 Blackwell (TP1). The maintained default Flash-Next profile
 stays native NEXTN MTP with FR-Spec (.97 static memory fraction; 4 requests /
 24 Mamba slots unless overridden; `next-plain` is the same without the FR-Spec
@@ -211,11 +211,10 @@ result. The TP2 capture support (PR89) passed 21 focused capture
 tests with pinned lint and an independent review.
 
 [Machine-readable release record](release-3.1.json) includes the exact source
-identities, settings, and validation scope. Publication of the tag, image, and
-GitHub release is still pending; the planned version is `v3.1.0` and the
-reused superseded image build (0077) is not the final artifact. The 3.0 and
-earlier entries below remain dated history with their original labels and
-timing methods.
+identities, settings, validation scope, and published image digest for
+[Penny Royal 3.1.0](https://github.com/jpezzulli/sglang-rtxpro6000/releases/tag/pennyroyal-v3.1.0).
+The 3.0 and earlier entries below remain dated history with their original
+labels and timing methods.
 
 ## Penny Royal 3.0
 

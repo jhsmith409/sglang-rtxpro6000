@@ -125,7 +125,7 @@ measurements.
 ## Updating
 
 Native: follow [BUILD.md](BUILD.md#update-an-existing-install) with
-`RELEASE_REF='pennyroyal-v3.1.0'` once the tag is published. Container:
+`RELEASE_REF='pennyroyal-v3.1.0'`. Container:
 download the release's launch-file set and run
 `ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0` with the matching startup files,
 per the [container guide](docker/pennyroyal/README.md). Update any explicit
@@ -152,7 +152,7 @@ are in [CONFIGURATION.md](CONFIGURATION.md).
   decision, the memory-fraction measurements and the verification-backend
   choice.
 
-This release is in preparation with the final artifact pending: the tag
-`pennyroyal-v3.1.0` and the `v3.1.0` image are planned, and the published
-revision and image digest will be recorded when they exist (see
-[release-3.1.json](release-3.1.json)).
+Source: [`pennyroyal-v3.1.0`](https://github.com/jpezzulli/sglang-rtxpro6000/tree/pennyroyal-v3.1.0).
+Container: `ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0`.
+The exact image digest and build are recorded in
+[release-3.1.json](release-3.1.json).
