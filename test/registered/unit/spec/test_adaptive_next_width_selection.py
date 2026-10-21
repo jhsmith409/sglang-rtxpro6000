@@ -1,12 +1,16 @@
-"""CPU-only checks for the shipped Next adaptive width configuration and for WHEN
+"""CPU-only checks for the shipped Next fixed width configuration and for WHEN
 a width change is allowed to reach the worker.
 
 ``configs/pennyroyal/adaptive-next.json`` is an ordinary file for the existing
 ``--speculative-adaptive-config`` flag -- no Penny-specific policy lives in the
-runtime. It lets a single-request batch (C1) pick W4/W8 (3/7 speculative
-steps at topk=1, draft width = steps + 1) and pins every C>1 batch to W4, while
-the global ``DEFAULT_ADAPTIVE_CONFIG`` and an ordinary fixed-width launch stay
-unchanged.
+runtime. It fixes the verify width by active concurrency: a single-request
+batch (C1) runs W8 (steps 7 at topk=1, draft width = steps + 1) and every C>1
+batch runs W4 (steps 3), while the global ``DEFAULT_ADAPTIVE_CONFIG`` and an
+ordinary fixed-width launch stay unchanged. One candidate per tier means the
+width is a lookup on the batch size and the acceptance EMA can never move it
+(the 3.0-era C1 W4/W8 adaptation and its anti-oscillation hold live on only as
+capabilities of the machinery, exercised below through explicit two-candidate
+tables).
 
 Three mechanics are pinned here:
 
@@ -26,12 +30,12 @@ Three mechanics are pinned here:
   steps=7 overriding the next C4 policy of steps=3.
 
 * the C1 anti-oscillation hold ported from the donor controller: after a width
-  switch the C1 slot re-decides only once `switch_grace_batches` completed
-  feedback batches have passed, and a reversal of the previous switch doubles
-  that hold up to `max_grace_batches`, while the acceptance EMA keeps learning
-  through the hold and C>=2 routing stays immediate. A tier that omits the keys
-  (every other configuration, including the defaults) keeps the old
-  switch-on-every-decision policy.
+  switch a multi-candidate C1 slot re-decides only once `switch_grace_batches`
+  completed feedback batches have passed, and a reversal of the previous switch
+  doubles that hold up to `max_grace_batches`, while the acceptance EMA keeps
+  learning through the hold and C>=2 routing stays immediate. A tier that omits
+  the keys (every other configuration, including the defaults and the shipped
+  fixed table) keeps the switch-on-every-decision policy.
 
 All evidence is CPU-only (no CUDA on this host): real capture, replay, numerics
 and any hardware/performance claim remain GPU-window work.
@@ -69,7 +73,10 @@ ADAPTIVE_NEXT_CONFIG = os.path.abspath(
     )
 )
 
-NEXT_CANDIDATE_STEPS = [3, 7]  # W4 / W8 verify windows at topk=1
+NEXT_CANDIDATE_STEPS = [7]  # shipped fixed C1 width: W8 verify window at topk=1
+# A two-candidate table, for the hold and transition machinery the runtime
+# still implements for explicit operator configurations.
+WIDE_NARROW_CANDIDATE_STEPS = [3, 7]
 FAST = {"ema_alpha": 1.0, "warmup_batches": 0, "update_interval": 1}
 # The anti-oscillation hold the shipped C1 entry is required to carry: a 40
 # completed-feedback-batch hold after a switch, doubled per direction reversal
@@ -153,35 +160,75 @@ class TestShippedNextConfig(_ConfigCase):
             adaptive_spec_params.resolve_candidate_steps_from_config(
                 ADAPTIVE_NEXT_CONFIG
             ),
-            NEXT_CANDIDATE_STEPS,
+            [3, 7],
         )
 
-    def test_the_shipped_c1_entry_carries_the_bounded_hold(self):
-        # The hold is C1 policy only: a single-candidate tier like C>=2 has
-        # nothing to oscillate between and must not inherit a delay, and the
-        # global defaults stay as they were for every other launcher.
+    def test_the_shipped_tiers_are_single_candidates(self):
+        # Fixed by concurrency: one candidate per tier, no hysteresis or hold
+        # keys needed or honoured, so the acceptance EMA can never move the
+        # width and every slot keeps the plain switch-on-every-decision
+        # defaults (a grace of zero changes nothing for a single candidate).
         with open(ADAPTIVE_NEXT_CONFIG) as f:
             shipped = json.load(f)
-        for key, value in C1_HOLD.items():
-            self.assertEqual(shipped["1"][key], value)
-        self.assertNotIn("switch_grace_batches", shipped["2"])
-
+        self.assertEqual(shipped["1"], {"candidate_steps": NEXT_CANDIDATE_STEPS})
+        self.assertEqual(shipped["2"], {"candidate_steps": [3]})
         params = self._params(7, ADAPTIVE_NEXT_CONFIG)
-        self.assertEqual(params._slots[1].switch_grace_batches, 40)
-        self.assertEqual(params._slots[1].grace_backoff, 2.0)
-        self.assertEqual(params._slots[1].max_grace_batches, 80)
+        self.assertEqual(params._slots[1].switch_grace_batches, 0)
         self.assertEqual(params._slots[2].switch_grace_batches, 0)
 
-    def test_the_shipped_c1_hold_damps_a_cycling_workload_without_freezing_it(self):
-        # The real shipped file, with its real EMA (alpha 0.2, warmup 10,
-        # interval 5) and its real W4/W8 thresholds, driven by a workload whose
-        # acceptance cycles between rejecting and fully accepting every 10
-        # batches -- 400 completed feedback batches. On the exact base the same
-        # stream re-decided into 39 width changes (a flip per ~10-batch swing,
-        # the reported 47-in-72-seconds / 1081-in-130-turns shape). With the
-        # shipped hold it is 5, spaced by the 40-batch hold and its 80-batch
-        # reversal cap, and both widths are still selected.
+    def test_the_shipped_policy_never_moves_under_a_cycling_workload(self):
+        # The workload whose acceptance cycles between rejecting and fully
+        # accepting every 10 batches -- 400 completed feedback batches -- is
+        # the shape that ping-ponged the 3.0-era C1 table (39 re-decisions on
+        # the exact base, the reported 47-in-72-seconds / 1081-in-130-turns
+        # problem). With one candidate per tier the fixed lookup cannot move:
+        # zero width changes, C1 stays W8 and every concurrent batch stays W4.
         params = self._params(NEXT_CANDIDATE_STEPS[-1], ADAPTIVE_NEXT_CONFIG)
+        stream = ([[7]] * 10 + [[0]] * 10) * 20
+        trace = []
+        last = params.get_steps_for_batch(1)
+        for i, counts in enumerate(stream, start=1):
+            params.on_verify_complete(counts, batch_size=1)
+            steps = params.get_steps_for_batch(1)
+            if steps != last:
+                trace.append((i, steps))
+                last = steps
+        self.assertEqual(trace, [])
+        self.assertEqual(params.get_steps_for_batch(1), 7)
+        self.assertEqual(params.get_steps_for_batch(6), 3)
+
+    def test_the_shipped_widths_are_w8_at_c1_and_w4_at_every_concurrency(self):
+        params = self._params(NEXT_CANDIDATE_STEPS[-1], ADAPTIVE_NEXT_CONFIG)
+        self.assertEqual(params._slots[1].candidate_steps, NEXT_CANDIDATE_STEPS)
+        self.assertEqual(params._slots[2].candidate_steps, [3])
+        # steps + 1 is the draft width, so C1 runs W8 and C>1 runs W4.
+        self.assertEqual({s + 1 for s in params._slots[1].candidate_steps}, {8})
+        self.assertEqual(params.get_steps_for_batch(1), 7)
+        for batch_size in (2, 3, 4, 6, 8, 32, 256):
+            self.assertEqual(params.get_steps_for_batch(batch_size), 3)
+
+    def test_a_two_candidate_c1_table_damps_a_cycling_workload_without_freezing_it(
+        self,
+    ):
+        # The hold machinery, kept for explicit operator tables: an explicit
+        # two-candidate C1 entry with the shipped hold keys and the real
+        # default EMA (alpha 0.2, warmup 10, interval 5) and W4/W8 thresholds,
+        # driven by a workload whose acceptance cycles between rejecting and
+        # fully accepting every 10 batches -- 400 completed feedback batches.
+        # Without the hold the same stream re-decides into 39 width changes (a
+        # flip per ~10-batch swing, the reported 47-in-72-seconds /
+        # 1081-in-130-turns shape). With the hold it is 5, spaced by the
+        # 40-batch hold and its 80-batch reversal cap, and both widths are
+        # still selected.
+        params = self._params(
+            WIDE_NARROW_CANDIDATE_STEPS[-1],
+            self._temp_config(
+                {
+                    "1": {"candidate_steps": WIDE_NARROW_CANDIDATE_STEPS, **C1_HOLD},
+                    "2": {"candidate_steps": [3]},
+                }
+            ),
+        )
         stream = ([[7]] * 10 + [[0]] * 10) * 20
         trace = []
         last = params.get_steps_for_batch(1)
@@ -195,45 +242,42 @@ class TestShippedNextConfig(_ConfigCase):
         self.assertLessEqual(
             len(trace), len(stream) // C1_HOLD["switch_grace_batches"] + 1
         )
-        self.assertEqual({steps for _, steps in trace}, set(NEXT_CANDIDATE_STEPS))
+        self.assertEqual(
+            {steps for _, steps in trace}, set(WIDE_NARROW_CANDIDATE_STEPS)
+        )
         gaps = [b - a for (a, _), (b, _) in zip(trace, trace[1:])]
         self.assertTrue(all(gap >= C1_HOLD["switch_grace_batches"] for gap in gaps))
 
-    def test_c1_may_go_wide_and_every_concurrent_batch_is_w4(self):
-        params = self._params(NEXT_CANDIDATE_STEPS[-1], ADAPTIVE_NEXT_CONFIG)
-        self.assertEqual(params._slots[1].candidate_steps, NEXT_CANDIDATE_STEPS)
-        self.assertEqual(params._slots[2].candidate_steps, [3])
-        self.assertEqual(params.candidate_steps, NEXT_CANDIDATE_STEPS)
-        # steps + 1 is the draft width, so C1 covers W4/W8 and C>1 only W4.
-        self.assertEqual({s + 1 for s in params._slots[1].candidate_steps}, {4, 8})
-        self.assertEqual(params.get_steps_for_batch(1), 7)
-        for batch_size in (2, 3, 4, 6, 8, 32, 256):
-            self.assertEqual(params.get_steps_for_batch(batch_size), 3)
-
-    def test_a_c1_slot_rising_to_w8_leaves_the_concurrent_slots_at_w4(self):
+    def test_c1_feedback_never_disturbs_the_shipped_fixed_widths(self):
         params = self._params(7, ADAPTIVE_NEXT_CONFIG)
-        # Hold C1 at the narrow end, then accept perfectly at C1 only.
-        params._slots[1].current_steps = 3
-        params._slots[1].ema_accept_len = 2.0
-        params._slots[1]._batch_count = 100
-        for _ in range(20):
-            params.on_verify_complete([3, 3], batch_size=1)
-        self.assertEqual(params.get_steps_for_batch(1), 7)
-        self.assertEqual(params.get_steps_for_batch(4), 3)
+        # Feed the policy through the real path with legitimate state: one
+        # accepted-draft count per request in the batch (C1 -> one entry),
+        # full acceptance, mid acceptance, then rejection, past warmup (10)
+        # and across several update intervals (5). One candidate per tier
+        # makes the lookup a function of the batch size, so every decision
+        # re-selects the fixed width: C1 stays W8 and every concurrent batch
+        # stays W4.
+        for counts in [[7]] * 10 + [[3]] * 10 + [[0]] * 10:
+            self.assertIsNone(params.on_verify_complete(counts, batch_size=1))
+            self.assertEqual(params.get_steps_for_batch(1), 7)
+            self.assertEqual(params.get_steps_for_batch(4), 3)
+        # The EMA itself did learn -- the feedback reached the policy; the
+        # fixed candidates simply give it nowhere to move.
+        self.assertLess(params._slots[1].ema_accept_len, 1.0)
         self.assertEqual(params.get_steps_for_batch(6), 3)
 
     def test_the_wide_launch_allocation_follows_the_shipped_table(self):
         # The fixed launch-maximum buffers (QSA pending ring, request
         # reservation) are sized off the widest width the table can reach:
-        # the shipped W4/W8 table caps the verify window at 8 tokens.
+        # the shipped fixed table caps the verify window at W8's 8 tokens.
         from sglang.srt.runtime_context import _adaptive_draft_token_bound
 
         self.assertEqual(_adaptive_draft_token_bound(ADAPTIVE_NEXT_CONFIG), 8)
         self.assertEqual(_adaptive_draft_token_bound(None), 8)
 
     def test_wide_candidates_need_the_widest_launch_width(self):
-        # W4/W8 in one tier means launching at --speculative-num-steps 7;
-        # a W4 launch has to be told, not silently truncated at run time.
+        # The fixed C1 width (steps 7) exceeds a W4 launch, so such a launch
+        # has to be told, not silently truncated at run time.
         worker = _WorkerStub(launch_steps=3)
         controller = AdaptiveController(worker, config_path=ADAPTIVE_NEXT_CONFIG)
         with self.assertRaises(ValueError) as ctx:
@@ -276,7 +320,20 @@ class TestCapturedBucketGeometry(_ConfigCase):
     def test_the_wide_states_capture_only_the_bucket_c1_can_reach(self):
         _, worker = self._controller(ADAPTIVE_NEXT_CONFIG)
         self.assertEqual(worker.capture_requests[7], [1])
-        self.assertEqual(worker.capture_requests[3], [1, 2, 4, 8])
+        # Under the shipped fixed table C1 routes only to steps 7, so the W4
+        # state captures for the concurrent buckets alone -- no BS1 bucket on
+        # the narrow states.
+        self.assertEqual(worker.capture_requests[3], [2, 4, 8])
+        # The two-candidate table an operator can still configure explicitly
+        # keeps every bucket on W4, BS1 included: there C1 can settle narrow.
+        _, adaptive_worker = self._controller(
+            {
+                "1": {"candidate_steps": WIDE_NARROW_CANDIDATE_STEPS},
+                "2": {"candidate_steps": [3]},
+            }
+        )
+        self.assertEqual(adaptive_worker.capture_requests[3], [1, 2, 4, 8])
+        self.assertEqual(adaptive_worker.capture_requests[7], [1])
 
     def test_a_configured_bs1_bucket_keeps_c1_on_the_wide_slot(self):
         params = self._params(7, ADAPTIVE_NEXT_CONFIG)
@@ -297,13 +354,15 @@ class TestCapturedBucketGeometry(_ConfigCase):
 
 
 class TestC1WidthHold(_ConfigCase):
-    """The shipped C1 anti-oscillation hold, seen through the controller.
+    """The anti-oscillation hold machinery, seen through the controller.
 
-    The native runtime switched width 47 times in 72 s of acceptance-only
-    feedback and 1081 times over a 130-turn presentation: the controller
-    re-decides every batch, so candidates the EMA cannot separate trade places
-    forever. These walk the deterministic stream through the real path and pin
-    the bound.
+    The shipped 3.1 policy is fixed-width, so the hold is exercised here
+    through an explicit two-candidate table -- the machinery an operator can
+    still configure. The native runtime switched width 47 times in 72 s of
+    acceptance-only feedback and 1081 times over a 130-turn presentation: the
+    controller re-decides every batch, so candidates the EMA cannot separate
+    trade places forever. These walk the deterministic stream through the real
+    path and pin the bound.
     """
 
     @staticmethod
@@ -325,7 +384,11 @@ class TestC1WidthHold(_ConfigCase):
     def test_an_alternating_c1_stream_holds_one_width_between_holds(self):
         controller, _ = self._controller(
             {
-                "1": {"candidate_steps": NEXT_CANDIDATE_STEPS, **FAST, **C1_HOLD},
+                "1": {
+                    "candidate_steps": WIDE_NARROW_CANDIDATE_STEPS,
+                    **FAST,
+                    **C1_HOLD,
+                },
                 "2": {"candidate_steps": [3]},
             }
         )
@@ -341,7 +404,11 @@ class TestC1WidthHold(_ConfigCase):
     def test_the_c1_hold_never_delays_the_fixed_w4_routing_of_c2_batches(self):
         controller, worker = self._controller(
             {
-                "1": {"candidate_steps": NEXT_CANDIDATE_STEPS, **FAST, **C1_HOLD},
+                "1": {
+                    "candidate_steps": WIDE_NARROW_CANDIDATE_STEPS,
+                    **FAST,
+                    **C1_HOLD,
+                },
                 "2": {"candidate_steps": [3]},
             }
         )
@@ -360,8 +427,12 @@ class TestC1WidthHold(_ConfigCase):
         # C>=2 slot with no hold keys on its own next batch.
         controller, _ = self._controller(
             {
-                "1": {"candidate_steps": NEXT_CANDIDATE_STEPS, **FAST, **C1_HOLD},
-                "2": {"candidate_steps": NEXT_CANDIDATE_STEPS, **FAST},
+                "1": {
+                    "candidate_steps": WIDE_NARROW_CANDIDATE_STEPS,
+                    **FAST,
+                    **C1_HOLD,
+                },
+                "2": {"candidate_steps": WIDE_NARROW_CANDIDATE_STEPS, **FAST},
             }
         )
         controller.on_verify_complete([0], batch_size=1)
@@ -383,7 +454,7 @@ class TestWidthAppliesAtTheForwardBoundary(_ConfigCase):
     def test_a_stale_c1_completion_cannot_widen_the_in_flight_c4_batch(self):
         controller, worker = self._controller(
             {
-                "1": {"candidate_steps": NEXT_CANDIDATE_STEPS, **FAST},
+                "1": {"candidate_steps": WIDE_NARROW_CANDIDATE_STEPS, **FAST},
                 "2": {"candidate_steps": [3]},
             }
         )
@@ -423,7 +494,7 @@ class TestWidthAppliesAtTheForwardBoundary(_ConfigCase):
     def test_a_stale_c2_completion_cannot_narrow_the_in_flight_c1_batch(self):
         controller, worker = self._controller(
             {
-                "1": {"candidate_steps": NEXT_CANDIDATE_STEPS, **FAST},
+                "1": {"candidate_steps": WIDE_NARROW_CANDIDATE_STEPS, **FAST},
                 "2": {"candidate_steps": [3, 7], **FAST},
             }
         )
@@ -450,7 +521,7 @@ class TestWidthAppliesAtTheForwardBoundary(_ConfigCase):
         # observations, so two ranks must walk identical widths with no extra
         # collective and no per-rank timing input.
         cfg = {
-            "1": {"candidate_steps": NEXT_CANDIDATE_STEPS, **FAST},
+            "1": {"candidate_steps": WIDE_NARROW_CANDIDATE_STEPS, **FAST},
             "2": {"candidate_steps": [3, 7], **FAST},
         }
         script = [

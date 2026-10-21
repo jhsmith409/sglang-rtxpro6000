@@ -76,7 +76,7 @@ and manage the files yourself. Restart the server to apply changed settings.
   Every profile keeps its existing recipe, and an explicitly saved
   choice is never rewritten by the default. The two DFlash2 profiles need both
   model folders. FR-Spec and
-  adaptive width routing work together on `next-dflash2`; they are not
+  fixed concurrency width routing work together on `next-dflash2`; they are not
   competing profile choices. See
   [RUN.md](RUN.md#launch-flash-next-with-dflash2) for what the routed profile
   ships and pins.

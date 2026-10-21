@@ -96,25 +96,30 @@ The native-MTP profiles are the maintained default with their existing
 recipes; the DFlash2 profile is a fully supported opt-in. An explicitly saved
 profile choice is always preserved.
 
-For TP2, expose both RTX PRO 6000 GPUs in `run.sh` and set `TP_SIZE=2` in the
-startup file. If using a sidecar for image processing, expose that GPU too
+For TP2, `TP_SIZE` does not grant GPU access: expose both RTX PRO 6000 GPUs
+(`device_ids: ["0", "1"]` in the Compose device reservation, `--gpu 0,1` in
+`run.sh`) and set `TP_SIZE=2` in the startup file. If using a sidecar for image
+processing, expose that GPU too
 and select its **container-visible** `cuda:N` index. The sidecar is not part
 of the tensor-parallel inference pair.
 
-FR-Spec remains on when adaptive MTP is enabled. It narrows the draft
-vocabulary; adaptation changes draft length at C1. Concurrent batches keep
-FR-Spec with fixed four-token drafts. On the DFlash2 profile the same FR-Spec
-map rides along, and the width is routed instead: block 6 for one running
+FR-Spec is on for `next` and off for `next-plain`. It narrows the
+draft vocabulary; the verify width is fixed by concurrency: block 8 for a
+single running request, block 4 for every batch of two or more. On the DFlash2 profile the same FR-Spec
+map rides along, and the width is routed the same way: block 6 for one running
 request, block 4 for two or more, from the image's
 `configs/pennyroyal/adaptive-dflash2.json`.
 
 ## Start and verify
 
-Run from your launch-file folder, using the image tag from the release:
+Run from your launch-file folder, using the image tag from the release.
+The default startup is the maintained native-MTP profile, which needs only
+the target checkpoint; add `--startup config/start-flash-next-dflash2.sh`
+for the optional DFlash2 profile, which also needs its draft checkpoint:
 
 ```bash
 IMAGE='ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0'
-./run.sh --image "$IMAGE" --startup config/start-flash-next-dflash2.sh
+./run.sh --image "$IMAGE"
 ```
 
 The script runs `docker run` in the foreground and shows the server logs.

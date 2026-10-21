@@ -94,8 +94,10 @@ source "$IMAGE_CONFIGS/startup-summary.sh"
 pennyroyal_version_banner
 
 CONTEXT_LENGTH=524288
-# The approved adaptive MTP width policy (C1 picks W4/W8 = steps 3/7, C2+
-# stays W4) ships as ordinary --speculative-adaptive-config file: automatic,
+# The approved Next width policy (fixed by concurrency: W8 = steps 7 at C1,
+# W4 = steps 3 at every batch of two or more, one candidate per tier so the
+# width is a batch-size lookup the acceptance EMA can never move) ships as
+# ordinary --speculative-adaptive-config file: automatic,
 # no user toggle. The launch runs the table's maximum (steps 7, draft tokens 8
 # at topk 1) because a candidate wider than the launch width is refused, not
 # resized, under captured graphs; the W8 state alone needs the BS1 decode
@@ -130,7 +132,7 @@ fi
 }
 [[ -f "$ADAPTIVE_CONFIG" ]] || { echo "Adaptive MTP policy missing: $ADAPTIVE_CONFIG" >&2; exit 1; }
 read -r ADAPTIVE_SHA _ < <(sha256sum "$ADAPTIVE_CONFIG")
-[[ "$ADAPTIVE_SHA" == 658158c29d2de8d2ee9c58ea8e7ac68a2dc70dd1ac1c46642e0a4302b798728f ]] || {
+[[ "$ADAPTIVE_SHA" == 3edaa87d66f535caae0bddb8f457f03fce0f6dc1f4e8091b20495a0dc9da41fb ]] || {
   echo "Adaptive MTP policy does not match the approved checksum" >&2; exit 1;
 }
 # The image entrypoint checks these for its built-in profiles; the exec path

@@ -17,7 +17,9 @@
 - TP2 is part of the new Flash-Next DFlash2 capability: it is expected to
   work and has not been tested on two-GPU hardware.
 - The native NEXTN MTP Flash-Next profiles are the maintained default with
-  unchanged recipes and continue to receive updates and testing.
+  unchanged recipes and continue to receive updates and testing. Their verify
+  width is fixed by active concurrency — block 8 at one running request,
+  block 4 at two or more — rather than acceptance-adaptive selection.
 
 See the [3.1 release notes](RELEASE_NOTES_3.1.md) for the change list with
 problem/fix/user effect and credits, the [machine-readable record](release-3.1.json)
