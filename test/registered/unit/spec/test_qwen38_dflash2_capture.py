@@ -37,6 +37,10 @@ HC_COUNT = 4
 HIDDEN = 8
 FEATURES = HC_COUNT * HIDDEN
 LAYER_IDS = [5, 15, 25, 35, 45]
+# Valid capture orders the shipped sorted ids do not exercise: the draft config may
+# list its layers in any order it was trained with, and only the first two ids of
+# the first one are out of ascending order.
+NONMONOTONIC_LAYER_IDS = [[15, 5, 25, 35, 45], [45, 15, 35, 5, 25]]
 ROWS = 3
 # One exact, distinct value per (layer, stream, row, column) of the fixture, so a
 # wrong layer, a wrong stream axis, or a shuffled token axis all move the numbers.
@@ -124,26 +128,44 @@ def _forward(backbone, mode=ForwardMode.EXTEND):
     )
 
 
-def _project(aux, wrong_width_state):
-    """Pack the captured list the way the logits path does, then run the real
-    DFlash2 projection that enforces the trained ``fc`` width."""
+def _draft(layer_ids):
+    """A draft whose ``fc`` is asymmetric across feature slots.
+
+    A uniform random ``Linear`` weights every slot alike, so a shape check is all
+    it effectively imposes. This weight scales with the slot a column sits in, so
+    the same features in a different order project to different values.
+    """
+    outs = torch.arange(HIDDEN, dtype=torch.float32).view(HIDDEN, 1, 1)
+    slots = torch.arange(len(layer_ids), dtype=torch.float32).view(1, -1, 1)
+    columns = torch.arange(HIDDEN, dtype=torch.float32).view(1, 1, HIDDEN)
+    weight = ((slots + 1) * (0.25 + 0.0625 * outs) + 0.125 * columns).reshape(
+        HIDDEN, HIDDEN * len(layer_ids)
+    )
     draft = SimpleNamespace(
-        fc=torch.nn.Linear(HIDDEN * len(LAYER_IDS), HIDDEN, bias=False),
+        fc=torch.nn.Linear(HIDDEN * len(layer_ids), HIDDEN, bias=False),
         is_nemotron_35_draft=False,
-        num_context_features=len(LAYER_IDS),
+        num_context_features=len(layer_ids),
         hidden_norm=RMSNorm(HIDDEN, eps=1e-6),
         config=SimpleNamespace(hidden_size=HIDDEN),
     )
-    projected = DFlash2DraftModel.project_target_hidden(
-        draft, pack_aux_hidden_states(aux)
-    )
+    draft.fc.weight.data.copy_(weight)
+    return draft
+
+
+def _projected(draft, aux):
+    return DFlash2DraftModel.project_target_hidden(draft, pack_aux_hidden_states(aux))
+
+
+def _project(aux, wrong_width_state):
+    """Pack the captured list the way the logits path does, then run the real
+    DFlash2 projection that enforces the trained ``fc`` width."""
+    draft = _draft(LAYER_IDS)
+    projected = _projected(draft, aux)
     assert projected.shape == (ROWS, HIDDEN)
     # A capture that emitted the packed HC state instead of the trained features
     # is the wrong width, and the draft must say so rather than misproject it.
     with pytest.raises(ValueError, match="feature dim mismatch"):
-        DFlash2DraftModel.project_target_hidden(
-            draft, pack_aux_hidden_states([wrong_width_state])
-        )
+        _projected(draft, [wrong_width_state])
     return projected
 
 
@@ -166,11 +188,53 @@ def test_capture_emits_completed_layer_hyper_connection_means(monkeypatch, mode)
     # copies it over ``output.hidden_states`` when it is set, which would erase the
     # very features the draft consumes.
     assert top.model.last_hc_hidden_states is None
+    assert top.model._dflash_completed_layer_ids == tuple(LAYER_IDS)
     assert len(aux) == len(LAYER_IDS)
     for feature, layer_id in zip(aux, LAYER_IDS):
         assert feature.shape == (ROWS, HIDDEN)
         torch.testing.assert_close(feature, _expected_feature(layer_id))
     _project(aux, packed_state)
+
+
+@pytest.mark.parametrize("layer_ids", NONMONOTONIC_LAYER_IDS)
+@pytest.mark.parametrize(
+    "mode", [ForwardMode.EXTEND, ForwardMode.DECODE, ForwardMode.IDLE]
+)
+def test_capture_returns_features_in_the_configured_order(monkeypatch, mode, layer_ids):
+    """The layer loop walks ids ascending, so an unsorted request must still be
+    handed back in the order the draft config listed: ``pack_aux_hidden_states``
+    concatenates in list order and the trained ``fc`` is asymmetric across those
+    slots, so a re-sorted feature row puts another layer's values in a slot."""
+    monkeypatch.setattr(f"{QWEN4_EXP}.get_parallel", lambda: SimpleNamespace(tp_size=1))
+    top = _top_level(_backbone())
+    Qwen4ExpForConditionalGeneration.set_dflash_layers_to_capture(top, layer_ids)
+    # Stored as asked -- sorting here would be the same bug in another place.
+    assert top.model._dflash_completed_layer_ids == tuple(layer_ids)
+
+    _, aux = _forward(top.model, mode)
+
+    assert len(aux) == len(layer_ids)
+    for slot, layer_id in enumerate(layer_ids):
+        assert aux[slot].shape == (ROWS, HIDDEN), f"slot {slot}"
+        torch.testing.assert_close(aux[slot], _expected_feature(layer_id))
+
+    draft = _draft(layer_ids)
+    # Explicitly ordered expected features, not what the capture happened to emit.
+    torch.testing.assert_close(
+        _projected(draft, aux),
+        _projected(draft, [_expected_feature(layer_id) for layer_id in layer_ids]),
+        rtol=0,
+        atol=0,
+    )
+    # The fixture and the asymmetric fc can actually tell these orders apart,
+    # otherwise the assertion above would be vacuous.
+    reversed_projected = _projected(
+        draft,
+        [_expected_feature(layer_id) for layer_id in reversed(layer_ids)],
+    )
+    assert not torch.allclose(
+        _projected(draft, aux), reversed_projected, rtol=0, atol=0
+    )
 
 
 def test_capture_does_not_ask_the_layers_for_before_layer_state(monkeypatch):

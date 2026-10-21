@@ -2095,6 +2095,11 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         with -- ``len(layer_ids) * hidden_size`` features per token, which is
         what the draft's ``fc`` expects.
 
+        The order is kept as given: ``forward`` visits layers ascending, so the
+        captured features are re-ordered into this sequence before packing -- the
+        draft's ``fc`` weights are not symmetric across its input slots, and a
+        re-sorted feature row would read another layer's values out of a slot.
+
         This path is validated at TP1 with every captured layer on this rank: a
         sharded or pipeline-split hyper-connection state would average a
         different set of streams per rank, so those topologies stop here instead
@@ -2153,6 +2158,10 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         )
         residual = None
         aux_hidden_states = []
+        # DFlash2 features are collected per layer id, not appended: this loop
+        # visits layers ascending while the draft's fc expects the configured
+        # order, which is the checkpoint's and need not be sorted.
+        dflash_features: dict[int, torch.Tensor] = {}
         for i in range(self.start_layer, self.end_layer):
             layer = self.layers[i]
             if i + 1 < self.end_layer:
@@ -2182,11 +2191,9 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
                     f"{hidden_states.shape[-1]} for hc_count={self.hc_count} "
                     f"hidden_size={self.hidden_size}"
                 )
-                aux_hidden_states.append(
-                    hidden_states.unflatten(-1, (self.hc_count, self.hidden_size)).mean(
-                        dim=-2
-                    )
-                )
+                dflash_features[i] = hidden_states.unflatten(
+                    -1, (self.hc_count, self.hidden_size)
+                ).mean(dim=-2)
 
         _commit_ple_batch(ple_batch, forward_batch)
 
@@ -2194,8 +2201,13 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         hidden_states, _ = self.hyper_connection_mixer.mix(hidden_states)
         if self._dflash_completed_layer_ids:
             # Same tuple arity in every forward mode, including the idle rows a
-            # captured graph replays: the draft consumes features, not HC state.
-            return hidden_states, aux_hidden_states
+            # captured graph replays, and one feature per requested id in the
+            # requested order: every id was validated onto this rank, so no slot
+            # can be missing. The draft consumes features, not HC state.
+            return hidden_states, [
+                dflash_features[layer_id]
+                for layer_id in self._dflash_completed_layer_ids
+            ]
         if not forward_batch.forward_mode.is_idle():
             return hidden_states, hc_hidden_states
 
