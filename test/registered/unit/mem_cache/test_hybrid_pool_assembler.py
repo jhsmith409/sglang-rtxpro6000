@@ -1,13 +1,15 @@
 """Unit tests for hybrid HiCache pool assembly."""
 
 import unittest
+from queue import Queue
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from sglang.srt.mem_cache.base_prefix_cache import EvictParams
-from queue import Queue
-from typing import Optional
-
+from sglang.srt.mem_cache.hicache_storage import PoolName
+from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
+    HybridCacheController,
+)
 from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
     _evict_mamba_for_device_alloc,
     _evict_swa_for_device_alloc,
@@ -17,12 +19,8 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
     draft_swa_host_size,
     draft_swa_tier,
 )
-from sglang.srt.mem_cache.pool_host.group import HostPoolGroup
-from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
-    HybridCacheController,
-)
-from sglang.srt.mem_cache.hicache_storage import PoolName
 from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool
+from sglang.srt.mem_cache.pool_host.group import HostPoolGroup
 from sglang.srt.mem_cache.unified_cache.components import ComponentType
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
@@ -154,7 +152,9 @@ class TestDraftSwaRegistrationAndBudget(CustomTestCase):
         from sglang.srt.mem_cache.cache_init_params import CacheInitParams
 
         allocator = SimpleNamespace(
-            swa_attn_allocator=SimpleNamespace(alloc=lambda n: None, free=lambda i: None)
+            swa_attn_allocator=SimpleNamespace(
+                alloc=lambda n: None, free=lambda i: None
+            )
         )
         return CacheInitParams(
             disable=False,
@@ -280,7 +280,9 @@ class TestDraftSwaRegistrationAndBudget(CustomTestCase):
             token_to_kv_pool_allocator=SimpleNamespace(),
             page_size=1,
         )
-        self.assertEqual(draft_swa_tier(params=params, peer_pools=(_Pool(1),)), (None, None))
+        self.assertEqual(
+            draft_swa_tier(params=params, peer_pools=(_Pool(1),)), (None, None)
+        )
 
 
 class TestDeviceAllocEviction(CustomTestCase):
