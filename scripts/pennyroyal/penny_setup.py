@@ -278,7 +278,10 @@ _EXPLANATIONS = {
     "USER_ID": "the numeric user that owns the writable folders inside the "
     "container",
     "GROUP_ID": "the numeric group that owns those folders",
-    "PENNYROYAL_PROFILE": "which model recipe the saved file runs",
+    "PENNYROYAL_PROFILE": "which model recipe the saved file runs; new setups "
+    "start on the Flash-Next DFlash2 profile, and the two native-MTP "
+    "Flash-Next profiles are deprecated — they still run, but they "
+    "receive no further updates or testing",
 }
 
 # Installer plumbing that only matters when the shipped layout is not the one
@@ -510,8 +513,9 @@ def run_session(
     # becomes the menu default or a target lookup key: an older
     # 'container:next' file must preselect 'next', and a corrupt value must not
     # become a default that Enter would silently return (or crash the later
-    # CONTAINER_DEFAULT_TARGET lookup). Enter on a fresh file keeps 'next'.
-    menu_default = "next"
+    # CONTAINER_DEFAULT_TARGET lookup). Enter on a fresh file keeps the current
+    # default profile (Flash-Next DFlash2).
+    menu_default = pc.default_profile(mode)
     if existing_profile:
         try:
             menu_default = pc.validate_profile(existing_profile, mode)

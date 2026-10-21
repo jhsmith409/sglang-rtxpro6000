@@ -37,7 +37,8 @@ The conversion supports recognized Flash-Next modules on exact SM120. Other
 hardware and module shapes keep the original path automatically; explicit
 requests for them fail loudly. The 27B/DFlash2 launcher keeps its existing
 precision path. The Flash-Next DFlash2 launcher (`PENNYROYAL_PROFILE=next-dflash2`)
-drafts from this converted head: it is part of that profile's cache identity, and
+drafts from this converted head and launches with the bundled FR-Spec 64K token
+map: both are part of that profile's cache identity, and
 a launch that resolved to the untouched BF16 weights gets its own namespace
 rather than sharing one.
 

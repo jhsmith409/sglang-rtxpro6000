@@ -28,24 +28,28 @@ done
 # and a baked default could not be told apart from one.
 export TILELANG_CACHE_DIR="${TILELANG_CACHE_DIR:-$CACHE_BASE/tilelang}"
 
-profile="${1:-next}"
+profile="${1:-next-dflash2}"
 if (( $# )); then shift; fi
 case "$profile" in
   --help|-h)
     printf '%s\n' \
       'Pennyroyal container' \
-      '  next        Flash-Next NVFP4 + FR-Spec/native NEXTN (default)' \
-      '  next-plain  Flash-Next NVFP4 + native NEXTN without FR-Spec' \
-      '  27b         Qwen3.8-27B FP8 + DFlash2' \
-      '  --check     Check installed packages and POSIX plugin without a GPU' \
-      '  exec CMD    Run an explicit utility command inside the image' \
-      'Set TARGET_MODEL; 27b also needs DRAFT_MODEL. Mount model directories' \
-      'read-only and writable /cache and /nixl directories. See the container guide.'
+      '  next-dflash2  Flash-Next NVFP4 + DFlash2 / FR-Spec (default)' \
+      '  next          Flash-Next NVFP4 + FR-Spec/native NEXTN MTP (deprecated)' \
+      '  next-plain    Flash-Next NVFP4 + native NEXTN MTP without FR-Spec (deprecated)' \
+      '  27b           Qwen3.8-27B FP8 + DFlash2' \
+      '  --check       Check installed packages and POSIX plugin without a GPU' \
+      '  exec CMD      Run an explicit utility command inside the image' \
+      'The deprecated native-MTP profiles still run and are unchanged; they get' \
+      'no further updates or testing. Set TARGET_MODEL; the DFlash2 profiles' \
+      'also need DRAFT_MODEL. Mount model directories read-only and writable' \
+      '/cache and /nixl directories. See the container guide.'
     exit 0 ;;
   --check) exec "$PYTHON" "$REPO_ROOT/docker/pennyroyal/check_install.py" ;;
   exec)
     (( $# )) || { echo 'exec requires a command' >&2; exit 2; }
     exec "$@" ;;
+  next-dflash2) recipe=serve-flash-next-dflash2.sh ;;
   next) recipe=serve-flash-next-frspec.sh ;;
   next-plain) recipe=serve-flash-next.sh ;;
   27b) recipe=serve-qwen38-27b-dflash2.sh ;;

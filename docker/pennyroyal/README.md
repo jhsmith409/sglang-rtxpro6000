@@ -15,10 +15,11 @@ For a native install, use [BUILD.md](../../BUILD.md).
 Your host
   run.sh                  image, GPUs, port, user and host mount paths
   config/
-    start-flash-next-frspec.sh  model and SGLang startup settings
-    start-flash-next-dflash2.sh alternative Flash-Next + DFlash2 startup settings
+    start-flash-next-dflash2.sh  model and SGLang startup settings (default)
     start-27b-dflash2.sh   alternative 27B + draft startup settings
-    nixl-posix-frspec.toml      disk-cache settings
+    start-flash-next-frspec.sh   deprecated native-MTP Flash-Next startup settings
+    start-flash-next.sh    deprecated native-MTP startup settings without FR-Spec
+    nixl-posix.toml / nixl-posix-frspec.toml   disk-cache settings
   model files             mounted read-only at /models
   compiler/runtime cache  mounted writable at /cache
   optional NIXL cache     mounted writable at /nixl
@@ -36,7 +37,9 @@ is copied out of the image and no image rebuild is needed.
 
 - Linux, Docker Engine, a compatible NVIDIA driver and NVIDIA Container Toolkit.
 - Downloaded [target model files](../../BUILD.md#reference-and-measured-checkpoints).
-  The 27B profile also needs its DFlash2 draft.
+  The Flash-Next DFlash2 profile also needs its draft
+  (`incoai/Qwen3.8-Flash-Next-DFlash2`); the 27B profile needs the 27B DFlash2
+  draft.
 - Writable cache directories owned by the UID/GID you will run as.
 - Enough host RAM: Flash-Next defaults to 32 GB HiCache plus about 48 GiB RAM
   PLE; 27B defaults to 96 GB HiCache. Leave room for loading and the OS.
@@ -50,7 +53,7 @@ Use matching source and image tags from the release notes. Download only the
 small launch-file set; a full source checkout is optional.
 
 ```bash
-RELEASE_REF='pennyroyal-v3.0.2'
+RELEASE_REF='pennyroyal-v3.1.0'
 BASE="https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/$RELEASE_REF/docker/pennyroyal/launch"
 mkdir -p pennyroyal/config
 cd pennyroyal
@@ -62,10 +65,10 @@ chmod +x run.sh
 ```
 
 The source files are also available here: [run.sh](launch/run.sh),
-[recommended Flash-Next FR-Spec startup](launch/config/start-flash-next-frspec.sh),
-[optional non-FR startup](launch/config/start-flash-next.sh),
-[Flash-Next DFlash2 startup](launch/config/start-flash-next-dflash2.sh),
-[27B startup](launch/config/start-27b-dflash2.sh), and
+[default Flash-Next DFlash2 startup](launch/config/start-flash-next-dflash2.sh),
+[27B startup](launch/config/start-27b-dflash2.sh),
+[deprecated FR-Spec / native-MTP startup](launch/config/start-flash-next-frspec.sh),
+[deprecated non-FR native-MTP startup](launch/config/start-flash-next.sh), and
 [FR-Spec NIXL settings](launch/config/nixl-posix-frspec.toml).
 
 ## Edit your configuration
@@ -84,10 +87,13 @@ PLE placement and image preprocessing are in this startup file.
 
 | Profile | Startup file |
 |---|---|
-| Flash-Next, native NEXTN MTP with FR-Spec (recommended) | `config/start-flash-next-frspec.sh` |
-| Flash-Next without FR-Spec (alternative) | `config/start-flash-next.sh` |
-| Flash-Next with DFlash2 (new, unmeasured) | `config/start-flash-next-dflash2.sh` |
+| Flash-Next with DFlash2 + FR-Spec (default, qualified) | `config/start-flash-next-dflash2.sh` |
 | 27B FP8 with DFlash2 | `config/start-27b-dflash2.sh` |
+| Flash-Next, native NEXTN MTP with FR-Spec (deprecated) | `config/start-flash-next-frspec.sh` |
+| Flash-Next without FR-Spec (deprecated) | `config/start-flash-next.sh` |
+
+The two native-MTP profiles still run with their existing recipes; they are
+deprecated and receive no further updates or testing.
 
 For TP2, expose both RTX PRO 6000 GPUs in `run.sh` and set `TP_SIZE=2` in the
 startup file. If using a sidecar for image processing, expose that GPU too
@@ -96,15 +102,18 @@ of the tensor-parallel inference pair.
 
 FR-Spec remains on when adaptive MTP is enabled. It narrows the draft
 vocabulary; adaptation changes draft length at C1. Concurrent batches keep
-FR-Spec with fixed four-token drafts.
+FR-Spec with fixed four-token drafts. On the DFlash2 profile the same FR-Spec
+map rides along, and the width is routed instead: block 6 for one running
+request, block 4 for two or more, from the image's
+`configs/pennyroyal/adaptive-dflash2.json`.
 
 ## Start and verify
 
 Run from your launch-file folder, using the image tag from the release:
 
 ```bash
-IMAGE='ghcr.io/jpezzulli/sglang-rtxpro6000:v3.0.2'
-./run.sh --image "$IMAGE" --startup config/start-flash-next-frspec.sh
+IMAGE='ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0'
+./run.sh --image "$IMAGE" --startup config/start-flash-next-dflash2.sh
 ```
 
 The script runs `docker run` in the foreground and shows the server logs.

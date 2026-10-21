@@ -84,12 +84,17 @@ def test_the_generated_startup_file_carries_the_route(tmp_path):
     (tmp_path / "models" / "some-model").mkdir()
     for name in ("config.json", "model.safetensors.index.json"):
         (tmp_path / "models" / "some-model" / name).write_text('{"marker": "x"}')
+    # The default profile is now the Flash-Next DFlash2 path, which needs a
+    # draft of its own; an unrecognised checkpoint stays profile-agnostic.
+    (tmp_path / "models" / "some-draft").mkdir()
+    (tmp_path / "models" / "some-draft" / "config.json").write_text('{"marker": "x"}')
     saved = {
         "HOST_MODELS_ROOT": str(tmp_path / "models"),
         "HOST_CACHE_BASE": str(tmp_path / "cache"),
         "HOST_NIXL_STORAGE_BASE": str(tmp_path / "nixl"),
         "LAUNCH_DIR": str(tmp_path / "generated"),
         "TARGET_MODEL": "/models/some-model",
+        "DRAFT_MODEL": "/models/some-draft",
     }
     env_file = tmp_path / "container.env"
     env_file.write_text(pc.serialize_env([("", sorted(saved.items()))]))

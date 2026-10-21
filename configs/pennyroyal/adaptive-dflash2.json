@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "Pennyroyal Flash-Next DFlash2 fixed width routing: pass this file as --speculative-adaptive-config.",
+    "Keys are batch-size floors and candidate_steps are speculative_num_steps; at topk=1 a width's",
+    "verify block is steps+1, so a single-request decode batch drafts block6 and every batch of two or",
+    "more drafts block4. This is concurrency routing, not acceptance-driven adaptation: one candidate",
+    "per tier means the width is a lookup on the batch size and the acceptance EMA can never move it",
+    "(a DFLASH tier with two candidates is refused, not silently averaged). No hold/backoff keys are",
+    "needed or honoured for the same reason.",
+    "Launch for it: --speculative-num-steps 5 --speculative-num-draft-tokens 6 (a routed width above the",
+    "launch width is refused, not resized, under captured graphs) and a BS1 bucket in the decode capture",
+    "list, which the spec-decode default keeps while max-running-requests >= 1."
+  ],
+  "1": {
+    "candidate_steps": [5]
+  },
+  "2": {
+    "candidate_steps": [3]
+  }
+}

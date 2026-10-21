@@ -1,11 +1,13 @@
 """CPU-only checks for the Flash-Next DFlash2 launch profile.
 
-The profile has to resolve the intended model and settings (DFLASH against the
-accepted NVFP4 Flash-Next target, the draft unquantized, the target's Triton
-verify path, the C6/36 capacity pair, 524K context, 32 GB HiCache and the NIXL
-tier, automatic KV sizing inside the 0.95 static fraction, and the full target
-vocabulary rather than the FR-Spec map or the adaptive policy), and its cache
-identity has to name the draft as well as the target.
+The profile has to resolve the qualified Flash-Next launch (DFLASH against the
+accepted NVFP4 Flash-Next target at the widest routed width — steps 5 and 6
+draft tokens — adaptive with the bundled fixed-width policy and the FR-Spec
+64K token map, the draft unquantized, the target's Triton verify path, the C6/36
+capacity pair, 524K context, 32 GB HiCache and the NIXL tier, automatic KV
+sizing inside the 0.95 static fraction, prefill CUDA graphs off with the
+runtime's own decode bucket list intact), and its cache identity has to name the
+draft, the map and the routing policy as well as the target.
 
 No GPU and no weights: the server binary records argv, the image root is a
 stand-in, and ``derive_namespace.py`` really runs.
@@ -81,23 +83,38 @@ def test_recipe_resolves_the_intended_flash_next_dflash_launch(tmp_path):
         ("--reasoning-parser", "qwen3"),
         ("--tool-call-parser", "qwen3_coder"),
         ("--speculative-algorithm", "DFLASH"),
+        ("--speculative-num-steps", "5"),
+        ("--speculative-num-draft-tokens", "6"),
         ("--speculative-draft-model-quantization", "unquant"),
         ("--speculative-draft-kv-cache-dtype", "fp8_e4m3"),
         ("--speculative-draft-window-size", "2048"),
-        ("--speculative-num-draft-tokens", "4"),
     ):
         assert value_after(argv, flag) == expected, (flag, value_after(argv, flag))
     assert value_after(argv, "--speculative-draft-model-path").endswith("draft")
     assert value_after(argv, "--json-model-override-args") == TARGET_OVERRIDES
-    # The report has to say which launch this is, not assume every DFLASH is 27B.
-    assert "Profile: Flash-Next NVFP4 / DFlash2" in result.stdout
-    # Full target vocabulary: neither the FR-Spec 64K map nor the adaptive
-    # policy rides along, and no request-time sampling policy is invented. A
-    # linear DFlash chain has no top-k flag either.
+    # Routed widths, fixed policy, qualified map: the flags are the profile.
+    assert "--speculative-adaptive" in argv
+    assert value_after(argv, "--speculative-adaptive-config").endswith(
+        "adaptive-dflash2.json"
+    )
+    assert value_after(argv, "--speculative-token-map").endswith("flash-next-64k.pt")
+    assert "--disable-prefill-cuda-graph" in argv
+    # The decode bucket list belongs to the runtime: naming one here would drop
+    # the graphs the C2+ widths run on.
+    assert "--cuda-graph-bs-decode" not in argv
+    # The report has to say which launch this is, name FR-Spec, the resident
+    # FP8 head and PLE, and not call fixed routing "adaptive MTP".
+    assert (
+        "Profile: Flash-Next NVFP4 + DFlash2 (DFLASH, FR-Spec, routed widths)"
+        in result.stdout
+    )
+    assert "FR-Spec: on" in result.stdout
+    assert "FR-Spec token map:" in result.stdout
+    assert "Online FP8: off (automatic: eligibility not met)" in result.stdout
+    assert "PLE: host RAM" in result.stdout
+    assert "DFLASH fixed-width routing" in result.stdout
+    assert "adaptive MTP" not in result.stdout
     for absent in (
-        "--speculative-token-map",
-        "--speculative-adaptive",
-        "--speculative-adaptive-config",
         "--speculative-eagle-topk",
         "--min-p",
         # Automatic KV sizing: the pool is left to the memory SGLang profiles.
@@ -125,17 +142,13 @@ def test_draft_position_extension_uses_this_drafts_own_rope(tmp_path):
     assert value_after(argv, "--json-model-override-args") == TARGET_OVERRIDES
 
 
-def test_the_checkpoints_own_block8_is_selectable(tmp_path):
-    result, argv, _ = launch_recipe(tmp_path, SPECULATIVE_NUM_DRAFT_TOKENS="8")
-    assert result.returncode == 0, result.stderr
-    assert value_after(argv, "--speculative-num-draft-tokens") == "8"
-
-
-def test_a_block_width_the_draft_layout_was_not_built_for_stops_the_launch(tmp_path):
-    for width in ("6", "16", "word"):
+def test_the_routed_width_is_not_an_operator_knob(tmp_path):
+    # The launch always carries the widest routed width. An inherited
+    # SPECULATIVE_NUM_DRAFT_TOKENS — the old block-width knob — changes nothing.
+    for width in ("4", "8", "word"):
         result, argv, _ = launch_recipe(tmp_path, SPECULATIVE_NUM_DRAFT_TOKENS=width)
-        assert result.returncode != 0 and argv is None, width
-        assert "must be 4 or 8" in result.stderr, (width, result.stderr)
+        assert result.returncode == 0, result.stderr
+        assert value_after(argv, "--speculative-num-draft-tokens") == "6", width
 
 
 def test_the_draft_is_part_of_the_cache_identity(tmp_path):
@@ -159,14 +172,27 @@ def test_the_draft_is_part_of_the_cache_identity(tmp_path):
     assert updated_draft != trained
     # And the namespace is stable for an unchanged draft, not re-keyed per boot.
     assert relaunch() == updated_draft
-    # A different verification width changes the draft's block layout, so it is
-    # identity too rather than a reuse of the same captured blocks.
-    assert relaunch(SPECULATIVE_NUM_DRAFT_TOKENS="8") != updated_draft
     # The accepted GDN accumulate mode is cache identity here as it is on the
     # other Flash-Next profiles.
     assert relaunch(FLASHINFER_GDN_FP16_ACCUM_MMA="0") != updated_draft
     # With the disk tier off the namespace is simply not derived.
     assert relaunch(NIXL="off") == "unset"
+
+
+def test_the_map_and_policy_hashes_are_namespace_fields(tmp_path):
+    # Routing and the reduced map decide what gets drafted, so both files are
+    # hashed into the derived namespace: a swapped asset must not reuse the
+    # captured cache. The recipes state the fields; this proves the launch
+    # really passes them and still derives one directory per identity.
+    result, _, server_env = launch_recipe(tmp_path)
+    assert result.returncode == 0, result.stderr
+    derived = Path(server_env["namespace"])
+    assert derived.is_dir(), derived
+    name = derived.name
+    assert len(name.split("_")[-1]) == 12, name  # digest suffix
+    # A second launch of the same identity reuses the same directory.
+    again = launch_recipe(tmp_path)
+    assert again[2]["namespace"] == server_env["namespace"]
 
 
 class ProfileRoutingTests(config_suite.FixtureMixin, unittest.TestCase):
@@ -202,7 +228,20 @@ class ProfileRoutingTests(config_suite.FixtureMixin, unittest.TestCase):
             plan.argv,
             [str(self.repo / "configs/pennyroyal/serve-flash-next-dflash2.sh")],
         )
-        self.assertIn("Flash-Next NVFP4 + DFlash2", plan.summary[1])
+        self.assertIn(
+            "Flash-Next NVFP4 + DFlash2 (DFLASH, FR-Spec, routed widths)",
+            plan.summary[1],
+        )
+
+    def test_the_routed_profile_is_the_default_for_new_setups(self):
+        # A fresh setup starts on DFlash2 in both modes; the deprecated NEXTN
+        # profiles stay selectable and say so in their labels.
+        self.assertEqual(pc.default_profile("native"), "next-dflash2")
+        self.assertEqual(pc.default_profile("container"), "next-dflash2")
+        for deprecated in ("next", "next-plain"):
+            self.assertIn("deprecated", pc.PROFILE_LABEL[deprecated])
+        self.assertNotIn("deprecated", pc.PROFILE_LABEL["next-dflash2"])
+        self.assertNotIn("deprecated", pc.PROFILE_LABEL["27b"])
 
     def test_the_draft_is_required_and_a_wrong_target_is_still_a_mixup(self):
         plan = self.native_plan(self.native_env(), profile="next-dflash2")
@@ -236,12 +275,15 @@ class ProfileRoutingTests(config_suite.FixtureMixin, unittest.TestCase):
 def without_path_values(argv: list[str]) -> list[str]:
     """Blank the values of the flags whose path legitimately differs between the
     native recipe and the mounted script (the pinned chat template lives in the
-    image, the NIXL TOML next to the operator's startup file)."""
+    image, the NIXL TOML next to the operator's startup file, and the FR-Spec map
+    and width policy resolve through each path's own configs directory)."""
     path_flags = {
         "--chat-template",
         "--hicache-storage-backend-extra-config",
         "--model-path",
         "--speculative-draft-model-path",
+        "--speculative-adaptive-config",
+        "--speculative-token-map",
     }
     kept, blank = [], False
     for item in argv:

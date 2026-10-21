@@ -23,8 +23,8 @@ TARGET_MODEL="/models/RadixArk-Qwen3.8-Flash-Next-NVFP4"
 DRAFT_MODEL="/models/incoai-Qwen3.8-Flash-Next-DFlash2"
 # Host-RAM HiCache tier in decimal GB (SGLang sizes the pool at GB * 1e9).
 HICACHE_SIZE_GB=32
-# TP1 is the qualified topology, and the only one the DFlash2 target-feature
-# capture is validated on. TP_SIZE=2 also needs run.sh --gpu 0,1.
+# TP1 is the qualified default. TP2 is expected to work; it has not been tested
+# on two-GPU hardware. TP_SIZE=2 also needs run.sh --gpu 0,1.
 TP_SIZE=1
 # RAM keeps the original checkpoint and PLE path; nvme needs the prepared
 # snapshot plus run.sh --nvme-ple (see tools/ple_nvme/README.md).
@@ -41,12 +41,11 @@ NIXL=on
 # requests/36 slots (the NEXTN recipes use 4/24).
 MAX_RUNNING_REQUESTS=6
 MAX_MAMBA_CACHE_SIZE=36
-# Verification block width: 4 is what the model card qualified, 8 is the
-# checkpoint's own block_size; the draft's conv layout follows whichever one
-# the launch resolves, so the two are separate cache namespaces.
-# A value forwarded by run.sh (or exported here) wins; the default is 4.
-SPECULATIVE_NUM_DRAFT_TOKENS="${SPECULATIVE_NUM_DRAFT_TOKENS:-4}"
-# ----------------------------------------------------------------------------
+# Verification width is routed, not chosen: the bundled fixed-width policy gives
+# block 6 to a single-request decode batch and block 4 to every batch of two or
+# more, so the draft's conv layout follows one routed maximum (block 6) that the
+# launch always asks for. There is no operator width knob on this profile.
+# ---------------------------------------------------------------------------
 
 export NUMPY_MADVISE_HUGEPAGE=0
 # The launcher may forward the operator's saved choice; unset keeps the
@@ -116,11 +115,19 @@ MAMBA_TRACK_INTERVAL=64
 PREFILL_CHUNK_SIZE=4096
 LINEAR_ATTN_VERIFY_BACKEND=triton
 SPECULATIVE_ALGORITHM=DFLASH
-DRAFT_TOKENS="${SPECULATIVE_NUM_DRAFT_TOKENS:-4}"
-case "$DRAFT_TOKENS" in
-  4|8) ;;
-  *) echo "SPECULATIVE_NUM_DRAFT_TOKENS must be 4 or 8 for this draft, got '$DRAFT_TOKENS'" >&2; exit 1 ;;
-esac
+# Width routing policy (block 6 at one request, block 4 at two or more) and the
+# qualified FR-Spec 64K token map are image/repo assets, read from $IMAGE_CONFIGS.
+# The launch carries the widest routed width; a routed width above it is refused,
+# not resized, under captured graphs, and no --speculative-dflash-block-size is
+# passed, so the checkpoint's own block-size field never conflicts. Decode graph
+# buckets stay on the runtime's own spec-decode list: forcing a narrower list
+# here would strip the graphs the wider concurrency tiers run on. Prefill graphs
+# are disabled, and neither asset gets a checksum gate: its hash is namespace
+# identity, so a swapped file selects a new namespace instead.
+SPEC_STEPS=5
+DRAFT_TOKENS=6
+TOKEN_MAP="$IMAGE_CONFIGS/frspec/flash-next-64k.pt"
+ADAPTIVE_CONFIG="$IMAGE_CONFIGS/adaptive-dflash2.json"
 # From the DFlash2 checkpoint itself: its trained sliding window, its mask token
 # id and the completed target layers its fc was trained on. Written down rather
 # than probed, like the 27B startup file; a draft that does not match them is
@@ -146,6 +153,10 @@ fi
   echo "Incomplete draft checkpoint: $DRAFT_MODEL" >&2
   exit 1
 }
+[[ -f "$TOKEN_MAP" ]] || { echo "FR-Spec map missing: $TOKEN_MAP" >&2; exit 1; }
+[[ -f "$ADAPTIVE_CONFIG" ]] || { echo "Width-routing policy missing: $ADAPTIVE_CONFIG" >&2; exit 1; }
+read -r TOKEN_MAP_SHA _ < <(sha256sum "$TOKEN_MAP")
+read -r ADAPTIVE_SHA _ < <(sha256sum "$ADAPTIVE_CONFIG")
 # The image entrypoint checks these for its built-in profiles; the exec path
 # leaves the roots this script actually uses to the script itself.
 for directory in "${writable_dirs[@]}"; do
@@ -199,7 +210,7 @@ export SGLANG_MAMBA_CONV_DTYPE="$MAMBA_CONV_DTYPE"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}" MKL_NUM_THREADS="${MKL_NUM_THREADS:-4}"
 export TOKENIZERS_PARALLELISM=false
 # The startup summary would otherwise report every DFLASH launch as the 27B one.
-export PENNYROYAL_PROFILE_LABEL="Flash-Next NVFP4 / DFlash2"
+export PENNYROYAL_PROFILE_LABEL="Flash-Next NVFP4 + DFlash2 (DFLASH, FR-Spec, routed widths)"
 
 # TP selects a topology, it never grants GPUs: refuse to launch when the
 # requested ranks (plus a dedicated cuda:N preprocessor) exceed what is
@@ -239,13 +250,13 @@ case "$ONLINE_FP8_PRECISION" in
   *) if [[ "${SGLANG_SM120_ONLINE_MXFP8:-}" == true ]]; then ONLINE_FP8_PRECISION=rowwise_fp8; else ONLINE_FP8_PRECISION=false; fi ;;
 esac
 echo "Media preprocessing: $SGLANG_MM_PREPROCESS_DEVICE ($IMAGE_PROCESSOR_BACKEND); model GPU: cuda:0"
-printf 'Pennyroyal profile: Flash-Next NVFP4 + DFlash2 (block %s, full target vocabulary)\n  runtime: %s\n  target: %s\n  draft: %s\n  cache root: %s\n  NIXL root: %s\n' \
-  "$DRAFT_TOKENS" "$SGLANG_EXE" "$TARGET_MODEL" "$DRAFT_MODEL" "$CACHE_BASE" "${NIXL_STORAGE_BASE:-off}"
+printf 'Pennyroyal profile: Flash-Next NVFP4 + DFlash2 / FR-Spec (routed block 6 at C1, block 4 at C2+)\n  runtime: %s\n  target: %s\n  draft: %s\n  token map: %s\n  width policy: %s\n  cache root: %s\n  NIXL root: %s\n' \
+  "$SGLANG_EXE" "$TARGET_MODEL" "$DRAFT_MODEL" "$TOKEN_MAP" "$ADAPTIVE_CONFIG" "$CACHE_BASE" "${NIXL_STORAGE_BASE:-off}"
 if [[ "$NIXL" == on ]]; then
   echo "Deriving NIXL namespace; checkpoint identity hashing may take time..."
   NIXL_STORAGE="$("$NAMESPACE_HELPER" \
     --base-root "$NIXL_STORAGE_BASE" \
-    --slug "qwen3_8_flash_next_524k_dflash2_${SGLANG_REV}" \
+    --slug "qwen3_8_flash_next_frspec_524k_dflash2_${SGLANG_REV}" \
     --git-repo "$REPO_ROOT" \
     --model "target=$TARGET_MODEL" \
     --model "draft=$DRAFT_MODEL" \
@@ -260,10 +271,13 @@ if [[ "$NIXL" == on ]]; then
     --field "target_kv_dtype=$KV_DTYPE" \
     --field "draft_kv_dtype=$DRAFT_KV_DTYPE" \
     --field "speculative_algorithm=$SPECULATIVE_ALGORITHM" \
+    --field "speculative_num_steps=$SPEC_STEPS" \
     --field "speculative_num_draft_tokens=$DRAFT_TOKENS" \
     --field "speculative_eagle_topk=1" \
-    --field "speculative_adaptive=false" \
-    --field "speculative_token_map=none" \
+    --field "speculative_adaptive=true" \
+    --field "speculative_adaptive_policy_sha256=$ADAPTIVE_SHA" \
+    --field "draft_token_map_sha256=$TOKEN_MAP_SHA" \
+    --field "prefill_cuda_graph=disabled" \
     --field "dflash_target_layer_ids=$DFLASH_TARGET_LAYER_IDS" \
     --field "dflash_mask_token_id=$DRAFT_MASK_TOKEN_ID" \
     --field "draft_window_size=$DRAFT_WINDOW_SIZE" \
@@ -330,6 +344,10 @@ launch_args=(serve \
   --enable-request-time-stats-logging --enable-metrics \
   --default-chat-template-kwargs "$DEFAULT_CHAT_TEMPLATE_KWARGS" \
   --speculative-algorithm "$SPECULATIVE_ALGORITHM" \
+  --speculative-num-steps "$SPEC_STEPS" \
+  --speculative-adaptive --speculative-adaptive-config "$ADAPTIVE_CONFIG" \
+  --speculative-token-map "$TOKEN_MAP" \
+  --disable-prefill-cuda-graph \
   --speculative-draft-model-path "$DRAFT_MODEL" \
   --speculative-draft-load-format safetensors \
   --speculative-draft-model-quantization unquant \

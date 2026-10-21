@@ -141,4 +141,4 @@ EXPOSE 8001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20m --retries=3 \
   CMD ["/opt/pennyroyal/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3).close()"]
 ENTRYPOINT ["/usr/local/bin/pennyroyal"]
-CMD ["next"]
+CMD ["next-dflash2"]

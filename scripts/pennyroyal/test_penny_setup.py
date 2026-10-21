@@ -303,14 +303,18 @@ class SetupSessionTests(FixtureMixin):
         self.assertEqual(pc.read_env_file(path)["SGLANG_MM_PREPROCESS_DEVICE"], "cpu")
 
     def test_enter_keeps_the_numbered_default_everywhere(self):
-        # Blank lines at every menu keep the documented default: profile next,
-        # media cpu, advanced section declined, save confirmed.
+        # Blank lines at every menu keep the documented default: the current
+        # default profile (Flash-Next DFlash2), media cpu, advanced declined,
+        # save confirmed. The draft path is required by that profile, so it is
+        # answered rather than left blank.
         code, output, path = self.run_setup(
-            [""] + self.basics(str(self.next_model)) + ["", ""]
+            [""]
+            + self.basics(str(self.next_model), draft=str(self.next_draft))
+            + ["", ""]
         )
         self.assertEqual(code, 0, output)
         saved = pc.read_env_file(path)
-        self.assertEqual(saved[pc.PROFILE_KEY], "next")
+        self.assertEqual(saved[pc.PROFILE_KEY], "next-dflash2")
         self.assertEqual(saved["SGLANG_MM_PREPROCESS_DEVICE"], "cpu")
         self.assertNotIn("MAX_RUNNING_REQUESTS", saved)
         self.assertIn("Saved ", output)
@@ -631,7 +635,7 @@ class SetupSessionTests(FixtureMixin):
             str(self.venv / "bin" / "python"),
         ]
         code, output, path = self.run_setup(
-            [""] + self.basics(str(self.next_model)) + ["y"] + advanced + ["y"]
+            ["next"] + self.basics(str(self.next_model)) + ["y"] + advanced + ["y"]
         )
         self.assertEqual(code, 0, output)
         asked = output.split("Review")[0]
@@ -651,7 +655,7 @@ class SetupSessionTests(FixtureMixin):
         # is a fresh timestamped sibling of the requested path, so the check
         # reads the file the wizard itself says it Saved (via run_setup).
         code, output, path = self.run_setup(
-            [""]
+            ["next"]
             + self.basics(str(self.next_model))
             + ["y"]
             + advanced[:2]
@@ -1396,7 +1400,9 @@ class SetupSessionTests(FixtureMixin):
     def test_27b_never_offers_a_knob_its_recipe_pins(self):
         # The wizard asks about what the selected profile can actually honour:
         # 27b fixes capacity, TP and PLE placement in its own recipe, so those
-        # questions would promise tuning that never reaches the server.
+        # questions would promise tuning that never reaches the server. Its KV
+        # pool is left to the engine unless the operator caps it, so the
+        # optional token cap is still asked about and may stay blank.
         code, output, path = self.run_setup(
             ["3"]
             + self.basics(str(self.dense_model), draft=str(self.draft_model))
@@ -1406,6 +1412,7 @@ class SetupSessionTests(FixtureMixin):
                 "false",  # online FP8
                 "false",  # WSL2 host-memory workaround
                 "true",  # unknown tools
+                "",  # max total tokens: blank = sized by the engine
                 "",  # build jobs
                 "/opt/nixl",  # NIXL prefix
                 str(self.venv / "bin" / "sglang"),
@@ -1418,12 +1425,12 @@ class SetupSessionTests(FixtureMixin):
         for absent in (
             "Max running requests",
             "Max mamba cache size",
-            "Max total tokens",
             "Tensor-parallel ranks",
             "PLE placement (ram or nvme)",
             "where the PLE embedding table lives",
         ):
             self.assertNotIn(absent, asked)
+        self.assertIn("Max total tokens", asked)
         # A compatible saved value is still preserved, not dropped, and a knob
         # this profile has never appears in the file.
         saved = pc.read_env_file(path)

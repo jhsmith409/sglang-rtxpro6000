@@ -53,10 +53,13 @@ RECIPE_BY_PROFILE = {
     "next-dflash2": "serve-flash-next-dflash2.sh",
     "27b": "serve-qwen38-27b-dflash2.sh",
 }
+# The two native-MTP profiles still launch and still work, but they are
+# deprecated: no further updates or testing are promised for them. The label is
+# where the wizard, the saved-config summary, and --show-config all say so.
 PROFILE_LABEL = {
-    "next": "Flash-Next NVFP4 + FR-Spec/native NEXTN",
-    "next-plain": "Flash-Next NVFP4 + native NEXTN without FR-Spec",
-    "next-dflash2": "Flash-Next NVFP4 + DFlash2",
+    "next": "Flash-Next NVFP4 + FR-Spec/native NEXTN MTP (deprecated)",
+    "next-plain": "Flash-Next NVFP4 + native NEXTN MTP without FR-Spec (deprecated)",
+    "next-dflash2": "Flash-Next NVFP4 + DFlash2 (DFLASH, FR-Spec, routed widths)",
     "27b": "Qwen3.8-27B FP8 + DFlash2",
 }
 # The --hicache-size literals the serve recipes pass when the operator
@@ -69,7 +72,7 @@ PROFILE_HICACHE_SIZE_GB = {
     "27b": "96",
 }
 CONTAINER_MODELS_TARGET = "/models"
-DEFAULT_IMAGE = "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.0.2"
+DEFAULT_IMAGE = "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0"
 COMPOSE_RELPATH = "docker/pennyroyal/compose.yaml"
 # The accepted manual container path: an ordinary host run.sh plus a mounted,
 # user-editable directory of SGLang startup scripts and NIXL TOMLs. The beta
@@ -108,10 +111,6 @@ CONTAINER_PASSTHROUGH_KEYS = (
     "PENNY_REASONING_EFFORT",
     "NCCL_P2P_DISABLE",
     "FLASHINFER_GDN_FP16_ACCUM_MMA",
-    # The Flash-Next DFlash2 startup file states its block width as a default it
-    # will accept an override of, so a saved choice reaches it the same way the
-    # other runtime knobs do; the 27b and NEXTN launches never read it.
-    "SPECULATIVE_NUM_DRAFT_TOKENS",
 )
 # Settings that only mean something while the disk tier is mounted, so a
 # generated launch with the tier off does not carry them at all.
@@ -122,10 +121,13 @@ DISK_ONLY_KEYS = ("SGLANG_HICACHE_NIXL_MAX_CACHE_GB",)
 # serve-qwen38-27b-dflash2.sh; the Next profiles read all of these from the
 # environment and are not listed.
 PROFILE_PINNED_KEYS = {
+    # The routed Flash-Next profile has no block-width knob: the policy fixes
+    # 6 at C1 and 4 at C2+, so the 3.0-era SPECULATIVE_NUM_DRAFT_TOKENS setting
+    # is named as unavailable instead of being forwarded and ignored.
+    "next-dflash2": {"SPECULATIVE_NUM_DRAFT_TOKENS": None},
     "27b": {
         "MAX_RUNNING_REQUESTS": "4",
         "MAX_MAMBA_CACHE_SIZE": "24",
-        "MAX_TOTAL_TOKENS": None,
         "TP_SIZE": "1",
         "PENNY_PLE_BACKEND": "ram",
     },
@@ -871,7 +873,9 @@ def load_config(
 
 
 def default_profile(mode: str) -> str:
-    return "next"
+    """Newly generated setups start on the Flash-Next DFlash2 profile; the
+    deprecated native-MTP profiles stay selectable and saved files keep theirs."""
+    return "next-dflash2"
 
 
 @dataclass

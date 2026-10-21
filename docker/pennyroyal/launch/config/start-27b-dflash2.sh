@@ -87,6 +87,19 @@ MAMBA_CONV_DTYPE=bfloat16
 MAMBA_TRACK_INTERVAL=256
 DRAFT_TOKENS=8
 DRAFT_WINDOW_SIZE=2048
+# KV pool sizing is automatic unless a cap is stated here or forwarded by
+# run.sh: unset or blank leaves the pool to the memory the engine profiles,
+# inside the 0.92 static fraction. A value must be positive and page-64-aligned.
+TOKEN_CAP_ARGS=()
+if [[ -n "${MAX_TOTAL_TOKENS:-}" ]]; then
+  if [[ ! "$MAX_TOTAL_TOKENS" =~ ^[0-9]+$ ]] || (( 10#$MAX_TOTAL_TOKENS <= 0 )); then
+    echo "MAX_TOTAL_TOKENS must be a positive integer" >&2; exit 1
+  fi
+  if (( 10#$MAX_TOTAL_TOKENS % PAGE_SIZE != 0 )); then
+    echo "MAX_TOTAL_TOKENS must be aligned to page size $PAGE_SIZE" >&2; exit 1
+  fi
+  TOKEN_CAP_ARGS=(--max-total-tokens "$MAX_TOTAL_TOKENS")
+fi
 if [[ ! "$HICACHE_SIZE_GB" =~ ^[1-9][0-9]*$ ]]; then
   echo "HICACHE_SIZE_GB must be a positive integer number of GB, got '$HICACHE_SIZE_GB'" >&2
   exit 1
@@ -216,6 +229,7 @@ launch_args=(serve \
   --served-model-name pennyroyal --host 0.0.0.0 --port 8001 --tp "$TP_SIZE" \
   --dtype "$COMPUTE_DTYPE" --kv-cache-dtype "$TARGET_KV_DTYPE" \
   --context-length "$CONTEXT_LENGTH" --page-size "$PAGE_SIZE" \
+  "${TOKEN_CAP_ARGS[@]}" \
   --json-model-override-args "$TARGET_OVERRIDES" \
   --max-running-requests 4 --sleep-on-idle --mem-fraction-static 0.92 \
   --max-mamba-cache-size 24 --mamba-ssm-dtype "$MAMBA_SSM_DTYPE" \
