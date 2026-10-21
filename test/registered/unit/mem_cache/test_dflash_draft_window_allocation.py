@@ -21,9 +21,15 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
+from sglang.srt.managers.scheduler_components.invariant_checker import (
+    SchedulerInvariantChecker,
+)
+from sglang.srt.managers.scheduler_components.pool_stats_observer import (
+    SchedulerPoolStatsObserver,
+)
+from sglang.srt.mem_cache import kv_cache_builder
 from sglang.srt.mem_cache.allocator.swa import SWATokenToKVPoolAllocator
 from sglang.srt.mem_cache.allocator.token import TokenToKVPoolAllocator
-from sglang.srt.mem_cache import kv_cache_builder
 from sglang.srt.mem_cache.cache_init_params import CacheInitParams
 from sglang.srt.mem_cache.memory_pool import MHATokenToKVPool
 from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
@@ -34,12 +40,6 @@ from sglang.srt.mem_cache.unified_cache.cache_action import (
 from sglang.srt.mem_cache.unified_cache.components.swa_component import SWAComponent
 from sglang.srt.speculative.base_spec_worker import BaseSpecWorker, HiCacheDraftMode
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
-from sglang.srt.managers.scheduler_components.pool_stats_observer import (
-    SchedulerPoolStatsObserver,
-)
-from sglang.srt.managers.scheduler_components.invariant_checker import (
-    SchedulerInvariantChecker,
-)
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
@@ -114,7 +114,10 @@ class TestWindowedDraftPool(CustomTestCase):
         # The real 64K-prefill failure: cached target rows exceed the entire
         # draft pool, while each pool independently conserves all of its slots.
         allocator = SimpleNamespace(
-            size=24064, size_full=1368256, size_swa=24064, page_size=64,
+            size=24064,
+            size_full=1368256,
+            size_swa=24064,
+            page_size=64,
             available_size=lambda: 768,
             full_available_size=lambda: 1302784,
             swa_available_size=lambda: 768,
@@ -131,38 +134,63 @@ class TestWindowedDraftPool(CustomTestCase):
         tree.swa_evictable_size.return_value = 23296
         tree.mamba_evictable_size.return_value = 12
         for name in (
-            "full_protected_size", "swa_protected_size", "mamba_protected_size",
-            "session_held_tokens", "session_held_full_tokens",
-            "session_held_swa_tokens", "session_held_mamba_slots",
+            "full_protected_size",
+            "swa_protected_size",
+            "mamba_protected_size",
+            "session_held_tokens",
+            "session_held_full_tokens",
+            "session_held_swa_tokens",
+            "session_held_mamba_slots",
         ):
             getattr(tree, name).return_value = 0
         worker = SimpleNamespace(
             is_hybrid_swa=False,
             model_runner=SimpleNamespace(
                 model_config=SimpleNamespace(),
-                draft_swa_kv_pool=object(), draft_swa_window=2048,
+                draft_swa_kv_pool=object(),
+                draft_swa_window=2048,
                 mtp_draft_device_pools=(),
             ),
             get_memory_pool=lambda: (req_pool, allocator),
         )
         memory = SimpleNamespace(
-            disable_radix_cache=False, radix_eviction_policy="lru",
+            disable_radix_cache=False,
+            radix_eviction_policy="lru",
             enable_session_radix_cache=False,
         )
         parallel = SimpleNamespace(
-            dcp_enabled=False, config=SimpleNamespace(enable_dp_attention=False),
+            dcp_enabled=False,
+            config=SimpleNamespace(enable_dp_attention=False),
         )
         with (
-            patch.object(kv_cache_builder, "get_resolved_model_impl", return_value=None),
+            patch.object(
+                kv_cache_builder, "get_resolved_model_impl", return_value=None
+            ),
             patch.object(kv_cache_builder, "uses_ssm_state", return_value=True),
             patch.object(kv_cache_builder, "is_deepseek_dsa", return_value=False),
-            patch.object(kv_cache_builder, "resolve_decode_retraction_backup", return_value="cpu_tensor"),
+            patch.object(
+                kv_cache_builder,
+                "resolve_decode_retraction_backup",
+                return_value="cpu_tensor",
+            ),
             patch.object(kv_cache_builder, "get_memory", return_value=memory),
             patch.object(kv_cache_builder, "get_parallel", return_value=parallel),
-            patch.object(kv_cache_builder, "get_disagg", return_value=SimpleNamespace(disaggregation_decode_enable_radix_cache=False)),
-            patch.object(kv_cache_builder, "get_schedule", return_value=SimpleNamespace(chunked_prefill_size=4096)),
+            patch.object(
+                kv_cache_builder,
+                "get_disagg",
+                return_value=SimpleNamespace(
+                    disaggregation_decode_enable_radix_cache=False
+                ),
+            ),
+            patch.object(
+                kv_cache_builder,
+                "get_schedule",
+                return_value=SimpleNamespace(chunked_prefill_size=4096),
+            ),
             patch.object(kv_cache_builder, "init_mm_embedding_cache"),
-            patch.object(kv_cache_builder, "create_tree_cache", return_value=tree) as create,
+            patch.object(
+                kv_cache_builder, "create_tree_cache", return_value=tree
+            ) as create,
         ):
             result = kv_cache_builder.build_kv_cache(
                 server_args=SimpleNamespace(
@@ -170,30 +198,43 @@ class TestWindowedDraftPool(CustomTestCase):
                     enable_mamba_extra_buffer_lazy=lambda: False,
                 ),
                 model_config=SimpleNamespace(hf_config=None, is_multimodal=False),
-                tp_worker=worker, page_size=64, spec_algorithm=SpeculativeAlgorithm.DFLASH,
-                attn_tp_cpu_group=None, tp_cpu_group=None, attn_cp_cpu_group=None,
-                enable_metrics=False, enable_kv_cache_events=False,
+                tp_worker=worker,
+                page_size=64,
+                spec_algorithm=SpeculativeAlgorithm.DFLASH,
+                attn_tp_cpu_group=None,
+                tp_cpu_group=None,
+                attn_cp_cpu_group=None,
+                enable_metrics=False,
+                enable_kv_cache_events=False,
                 ps=SimpleNamespace(pp_rank=0, pp_size=1, tp_size=1, tp_rank=0),
-                tp_group=None, pp_group=SimpleNamespace(cpu_group=None),
+                tp_group=None,
+                pp_group=SimpleNamespace(cpu_group=None),
                 enable_hierarchical_cache=True,
             )
         # Cache construction still sees the target's real model geometry.
         self.assertFalse(create.call_args.args[0].is_hybrid_swa)
         fields = dict(
-            tree_cache=tree, token_to_kv_pool_allocator=allocator,
-            req_to_token_pool=req_pool, is_hybrid_swa=result.is_hybrid_swa,
+            tree_cache=tree,
+            token_to_kv_pool_allocator=allocator,
+            req_to_token_pool=req_pool,
+            is_hybrid_swa=result.is_hybrid_swa,
             is_hybrid_ssm=result.is_hybrid_ssm,
             full_tokens_per_layer=result.full_tokens_per_layer,
             swa_tokens_per_layer=result.swa_tokens_per_layer,
             max_total_num_tokens=allocator.size_full,
-            get_last_batch=lambda: None, get_running_batch=lambda: None,
+            get_last_batch=lambda: None,
+            get_running_batch=lambda: None,
         )
         observer = SchedulerPoolStatsObserver(
-            **fields, session_controller=SimpleNamespace(sessions={}),
-            hisparse_coordinator=None, enable_hisparse=False,
+            **fields,
+            session_controller=SimpleNamespace(sessions={}),
+            hisparse_coordinator=None,
+            enable_hisparse=False,
         )
         checker = SchedulerInvariantChecker(
-            **fields, disaggregation_mode=None, page_size=64,
+            **fields,
+            disaggregation_mode=None,
+            page_size=64,
             pool_stats_observer=observer,
         )
         with patch(
@@ -278,6 +319,7 @@ class TestWindowedDraftPool(CustomTestCase):
         from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
             _PlainKvStrategy,
         )
+
         plain_components = {ComponentType.FULL, ComponentType.SWA}
 
         plain_pool = MHATokenToKVPool(
@@ -291,9 +333,7 @@ class TestWindowedDraftPool(CustomTestCase):
             enable_memory_saver=False,
         )
         self.assertTrue(_PlainKvStrategy().matches(plain_pool, plain_components))
-        self.assertTrue(
-            _PlainKvStrategy().matches(plain_pool, {ComponentType.FULL})
-        )
+        self.assertTrue(_PlainKvStrategy().matches(plain_pool, {ComponentType.FULL}))
 
     def test_swa_component_governs_the_draft_window(self):
         """The existing component accepts the draft binding and takes its window."""
@@ -343,7 +383,9 @@ class TestWindowedDraftPool(CustomTestCase):
         self.assertIsNone(composite.alloc(1))  # the pool is full
 
         component.apply_component_action(
-            FreeComponentDeviceSlot([first[:512]], component_type=component.component_type)
+            FreeComponentDeviceSlot(
+                [first[:512]], component_type=component.component_type
+            )
         )
         self.assertEqual(composite.swa_available_size(), 512)
         self.assertTrue(
@@ -372,7 +414,9 @@ class TestWindowedDraftPool(CustomTestCase):
         draft_pool.set_kv_buffer(
             SimpleNamespace(layer_id=0), first[:512], rows.clone(), rows.clone()
         )
-        self.assertTrue(torch.equal(draft_pool.get_key_buffer(0)[restored.long()], rows))
+        self.assertTrue(
+            torch.equal(draft_pool.get_key_buffer(0)[restored.long()], rows)
+        )
 
     def test_windowed_writes_land_in_mapped_slots_only(self):
         """A write addressed by target locations touches its slot, not its loc."""
@@ -510,7 +554,9 @@ class TestPagedChunkedPrefillBeyondCapacity(CustomTestCase):
             self.assertLessEqual(composite.swa_available_size(), 8192)
 
         self.assertEqual(seq_len, 24 * chunk)
-        self.assertIsInstance(composite.full_attn_allocator, PagedTokenToKVPoolAllocator)
+        self.assertIsInstance(
+            composite.full_attn_allocator, PagedTokenToKVPoolAllocator
+        )
 
         # No location is freed twice: the frontier slices are disjoint and sorted.
         self.assertGreater(len(freed_ranges), 1)

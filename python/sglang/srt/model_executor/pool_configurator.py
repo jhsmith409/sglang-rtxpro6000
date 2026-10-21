@@ -121,7 +121,9 @@ def _dflash_draft_cell_size(kvc: KVCacheConfigurator) -> int:
     return int(cell_size) * get_parallel().attn_dcp_size
 
 
-def dflash_draft_window_pool(kvc: KVCacheConfigurator) -> Optional[DflashDraftWindowPool]:
+def dflash_draft_window_pool(
+    kvc: KVCacheConfigurator,
+) -> Optional[DflashDraftWindowPool]:
     """What a windowed DFLASH draft KV pool would cost, and what it costs today.
 
     ``--speculative-draft-window-size`` already gives the draft a windowed
@@ -198,9 +200,7 @@ def dflash_draft_window_pool(kvc: KVCacheConfigurator) -> Optional[DflashDraftWi
     # the slots allocated are the same number rounded the same way.
     page = max(kvc.page_size * get_parallel().attn_dcp_size, 1)
     tokens = (tokens + page - 1) // page * page
-    return DflashDraftWindowPool(
-        tokens=tokens, cell_size=cell_size, window=int(window)
-    )
+    return DflashDraftWindowPool(tokens=tokens, cell_size=cell_size, window=int(window))
 
 
 def _get_dsv4_compress_state_dtype_sizes() -> tuple[int, int]:

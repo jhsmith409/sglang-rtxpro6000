@@ -1848,9 +1848,9 @@ class _PlainKvStrategy(StackStrategy):
             cache_controller=cache_controller,
             component_host_pools=component_host_pools,
             transfer_layer_num=len(full_layer_mapping),
-            pools_desc="KV + draft SWA"
-            if params.draft_swa_device_pool is not None
-            else "KV",
+            pools_desc=(
+                "KV + draft SWA" if params.draft_swa_device_pool is not None else "KV"
+            ),
         )
 
 
