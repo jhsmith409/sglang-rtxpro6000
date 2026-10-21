@@ -1,11 +1,10 @@
 # Qwen3.8 SGLang benchmarks on one RTX PRO 6000
 
-This record contains local benchmarks for Qwen3.8 Flash-Next NVFP4 and
-Qwen3.8-27B FP8, both with DFlash2, on one NVIDIA RTX PRO 6000 Blackwell
-96 GB GPU (SM120). Earlier dated sections keep their own configurations,
-including the Flash-Next native NEXTN MTP era. External results are labeled
-with their contributors, hardware, and scope. Each table names its timing
-method so different measurements remain distinct.
+This record contains local benchmarks for Qwen3.8 Flash-Next NVFP4 with
+native NEXTN MTP or optional DFlash2, and Qwen3.8-27B FP8 with DFlash2, on
+one NVIDIA RTX PRO 6000 Blackwell 96 GB GPU (SM120). Dated sections retain
+their measured configurations. External results identify their contributors,
+hardware and scope.
 
 **Looking for other users' experience?** [Community results](COMMUNITY-RESULTS.md)
 keeps credited external field reports separate from our measurements, including
@@ -25,7 +24,7 @@ by the launch recipes. The DFlash2 configurations below record the optional
 profile: our OrcaRouter ModelOpt NVFP4 checkpoint with the separate
 `incoai/Qwen3.8-Flash-Next-DFlash2` draft, FR-Spec on the bundled
 65,536-ID map, width routed by active batch size (block 6 for one request,
-block 4 for two or more), accepted draft tokens verified with FlashInfer's
+block 4 for two or more), draft tokens verified with FlashInfer's
 SM120 kernels (`--linear-attn-verify-backend flashinfer`), 524,288-token
 context, 6 requests / 36 Mamba slots, `.95` static memory fraction, automatic
 KV pool sizing, RAM PLE, 32 decimal GB HiCache, and NIXL. The 27B profile
@@ -61,47 +60,47 @@ tools, the deck rendered, and the previewed deck displayed correctly. The
 earlier recorded presentation averaged 189.27 tok/s on a different
 configuration; these were not matched A/B runs.
 
-### Decode rates, by recorded configuration
+### Current decode rates
 
 | Workload | Mean tok/s | Sampled peak tok/s | Source / configuration |
 |---|---:|---:|---|
-| Native MTP normal, single request, C1 W8 | **227.54** | **375.90** | `a60f442`, maintained default FR-Spec recipe |
-| DFlash2 + FlashInfer normal, single request, C1 W6 | **241.49** | **339.53** | `a60f442`, optional profile, routed W6 |
-| DFlash2 + FlashInfer full six-request C6, aggregate | **504.80** | **568.90** | `a60f442`, fixed W4 concurrent tier |
+| Native MTP, single request, C1 W8 | **227.54** | **375.90** | `a60f442`, native MTP + FR-Spec, C1 W8 |
+| DFlash2 + FlashInfer, single request, C1 W6 | **241.49** | **339.53** | `a60f442`, optional profile, routed W6 |
+| DFlash2 + FlashInfer, full C6 aggregate | **504.80** | **568.90** | `a60f442`, concurrent W4 tier |
+| DFlash2 + FlashInfer, presentation workflow (agentic), C1 W6 | **217.19** | **448.70** | `a60f442`, explicit medium reasoning |
+
+The normal decode screens used 128-token inputs and a 1,024-token output
+ceiling, three repeats with seeds 42/43/44, xhigh reasoning, temperature 0.8,
+top-p 0.95, top-k 40 and min-p 0.05. Rates include reasoning and use complete
+active-decode intervals, excluding the initial idle/prefill interval and
+unlogged tails. Full-C6 rates also exclude batch fill and drain.
+
+The FlashInfer C1 screen contains 21 complete intervals over 10.687586
+seconds; full C6 contains 17 over 20.495504 seconds. The native C1 screen
+contains 22 intervals over 11.171146 seconds. It used C1/W8 in a test profile
+whose concurrent tier was W6; the release uses C2+/W4. Only that test's C1
+result is shown here.
+
+The separate medium coding attempt measured 259.38 / 439.28 tok/s but ended
+unfinished. It is retained as first-pass timing evidence, not a completed
+coding benchmark.
+
+### Earlier 3.1 decode screens on the Triton path
+
+| Workload | Mean tok/s | Sampled peak tok/s | Source / configuration |
+|---|---:|---:|---|
 | Presentation workflow (agentic), C1 W6 | 194.56 | 421.35 | `a60f442`, DFlash2 + FR-Spec, Triton verify, routed W6 |
 | Coding flow, C1 W6 | 235.60 | 417.50 | `5ca3f39`, FR-Spec W6 |
 | Normal single request, C1 W6 | 228.44 | 336.20 | DFlash2 + FR-Spec, Triton verify, C1 W6 |
 | Regular C1 W4 | 214.18 | 306.44 | `5ca3f39`, FR-Spec fixed W4 |
 | Full six-request C6, aggregate | 566.14 | 657.52 | `5ca3f39`, FR-Spec W4, 15 full-C6 intervals |
+| Matched Triton control, C1 W6 | 227.37 | 346.82 | `a60f442`, verifier comparison |
+| Matched Triton control, full C6 W4 aggregate | 503.41 | 581.67 | `a60f442`, verifier comparison |
 
-All rows are 3.1-candidate sources; each keeps its recorded profile,
-verification path and width label. The FlashInfer screens repeat 128-token
-inputs with a 1,024-token output ceiling three times at seeds 42, 43 and 44,
-with normal non-greedy sampling (temperature 0.8, top-p 0.95, top-k 40,
-min-p 0.05, xhigh reasoning) so accepted-token counts are not a
-greedy-sampling artefact; their matched Triton controls from the same
-campaign are 227.37 / 346.82 at C1 W6 and 503.41 / 581.67 at full C6, shown
-as dated history below. Every screen uses the same eligible-window
-definition: a screen begins only once the first complete active-decode
-interval is visible in the live log and ends at its last one, because a
-window fixed at launch can silently capture zero intervals when the server
-logs little; C6 fill and drain periods are excluded, so the aggregate is not
-diluted. The FlashInfer C1 screen recorded 21 complete intervals totalling
-10.687586 s; the C6 screen recorded 17 intervals totalling 20.495504 s. The
-corrected full-C6 mean supersedes the earlier drain-inclusive 522.69 tok/s
-summary. The six-request figures are aggregate over the whole running batch,
-not the rate of each request; C1 rows are per-request and not directly
-comparable. The native-MTP row shows only C1: that screen ran the C=6
-profile, whose concurrent tier is W6, while the selected default routes C2+
-to W4, and no native full-C6/W4 screen exists yet, so no native full-batch
-figure is claimed here. A medium-effort coding rerun on the final source
-(259.38 / 439.28) did not complete, and its handoff does not accept it as a
-published coding benchmark, so it is not published as a current result; the
-accepted coding-flow row above predates the FlashInfer switch, and its final
-handoff record was not retained, so that task's completion fact is listed
-separately from the measurement.
-
-### Earlier 3.1 decode screens on the Triton path
+The earlier 566.14 full-C6 mean supersedes the drain-inclusive 522.69 summary
+for that screen. It is a separate run from the matched verifier comparison.
+The 235.60 / 417.50 coding-flow timing was accepted; its final handoff record
+was not retained.
 
 Before FlashInfer verification, the same optional profile and routing measured
 194.56 / 421.35 on the completed five-slide xhigh presentation (121 model
@@ -152,8 +151,8 @@ checks plus 24 subtests, pinned lint, and two live
 C1→C2→C1→C6→C1 cycles with eight switches and 122
 correctly routed CUDA-graph decode samples, followed by normal-answer and
 tool checks; that evidence was recorded on the DFlash2 profile at `a60f442`.
-The native-MTP configuration integration (PR102/PR103/PR104) was reviewed as
-one change and checked together: 231 CPU tests plus 69 subtests passed with
+The three configuration changes (PR102/PR103/PR104) were reviewed and
+checked together: 231 CPU tests plus 69 subtests passed with
 2 environment skips, and pinned lint passed; this is configuration
 validation, not a new native hardware campaign. FlashInfer verification was
 checked by the four existing SM120 RecoverSSM checks at each of W4 and W6

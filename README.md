@@ -121,7 +121,7 @@ target model keeps its full vocabulary. The maintained default is the
 [non-FR recipe](RUN.md#launch-flash-next-without-fr-spec-alternative) also
 selectable - without the map, and with the same block 8 / block 4 routing; the
 optional [DFlash2 recipe](RUN.md#launch-flash-next-with-dflash2) - which
-verifies its accepted draft tokens with FlashInfer's SM120 kernel - remains
+verifies its draft tokens with FlashInfer's SM120 kernel - remains
 fully available as an opt-in. DFlash2 offers more token-pool capacity; we are
 still evaluating performance across concurrency levels. TP2 for the DFlash2
 profile is expected to work; it has not been tested on two-GPU hardware.
@@ -165,9 +165,8 @@ and settings behind every number.
 | 63,906 tokens | **15,365.38** |
 | 489,921 tokens | **8,715.05** |
 
-
-The reasoning suite scored **93.46/100** on the qualified DFlash2
-qualification source, graded on actual answers. See [results and measurement settings](RESULTS.md#penny-royal-31)
+The Flash-Next DFlash2 reasoning qualification scored **93.46/100**. See
+[results and measurement settings](RESULTS.md#penny-royal-31)
 for the tool checks, cache restore, sampling details, and earlier results.
 
 <a id="27b-fp8--dflash2-performance-at-a-glance"></a>

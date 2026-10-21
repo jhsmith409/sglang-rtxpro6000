@@ -3,7 +3,7 @@
   "version": "3.1.0",
   "status": {
     "publication_approved": false,
-    "source_publication": "Accepted runtime and setup PRs merged; native NEXTN MTP restored as the maintained default (PR102), native fixed width policy (PR103) and optional FlashInfer verification (PR104) included; status is release preparation and final publication pending.",
+    "source_publication": "Original runtime and setup PRs are merged. Final configuration PRs 102\u2013104 are reviewed and pending integration with these release documents.",
     "container": "pending",
     "note": "Release tag, versioned image and GitHub release await final approval and the candidate image check; the planned version is v3.1.0 and no tag exists yet. The reused superseded image build (0077) is not the final artifact."
   },
@@ -18,7 +18,8 @@
     "published_revision": null,
     "merged_runtime_and_setup_revision": "d5886cc07b3bd4e05ff6a350f6a59a9df7f472b8",
     "accepted_setup_pr": 94,
-    "accepted_setup_head": "6407975420d57859e54fa94ff71263b20f95fda9"
+    "accepted_setup_head": "6407975420d57859e54fa94ff71263b20f95fda9",
+    "accepted_final_settings_revision": "8d120844fccb48bdb31c833f3722801cf56431a1"
   },
   "container": {
     "image": "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0",
@@ -31,7 +32,7 @@
     {
       "id": "flash_next_dflash2_profile",
       "pr": 94,
-      "summary": "Flash-Next DFlash2 launch profile and setup candidate: separate incoai/Qwen3.8-Flash-Next-DFlash2 draft, FR-Spec 65,536-ID map, resident rowwise-FP8 output head reuse, 0.95 memory fraction for image-workload headroom, 6 requests / 36 Mamba slots, 524,288-token context, 2,048-token draft window, HiCache/NIXL unchanged; offered as an optional profile — explicit saved selections are preserved.",
+      "summary": "Flash-Next DFlash2 launch profile and setup candidate: separate incoai/Qwen3.8-Flash-Next-DFlash2 draft, FR-Spec 65,536-ID map, resident rowwise-FP8 output head reuse, 0.95 memory fraction for image-workload headroom, 6 requests / 36 Mamba slots, 524,288-token context, 2,048-token draft window, HiCache/NIXL unchanged; offered as an optional profile \u2014 explicit saved selections are preserved.",
       "profiles": [
         "Flash-Next DFlash2"
       ]
@@ -161,7 +162,7 @@
     {
       "id": "native_mtp_maintained_default",
       "pr": 94,
-      "summary": "Native NEXTN MTP Flash-Next profiles are the maintained default for new setups with unchanged recipes, updates and testing; Flash-Next DFlash2 stays fully available as an opt-in.",
+      "summary": "Native NEXTN MTP remains the maintained Flash-Next default for new setups; Flash-Next DFlash2 remains available as an optional profile.",
       "profiles": [
         "Flash-Next",
         "Flash-Next non-FR"

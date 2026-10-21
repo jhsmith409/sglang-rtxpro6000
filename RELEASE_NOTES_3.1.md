@@ -4,7 +4,7 @@ Penny Royal 3.1 keeps native NEXTN MTP with FR-Spec as the maintained default
 for Qwen3.8 Flash-Next, with its verify width fixed by active concurrency
 (block 8 for one running request, block 4 for two or more). Flash-Next DFlash2
 with FR-Spec is fully available as an optional profile — same weights, same
-cache stack, its own draft model — now verifying accepted draft tokens with
+cache stack, its own draft model — now verifying draft tokens with
 FlashInfer's SM120 kernel. The release also replaces the preset KV-token cap
 with automatic pool sizing. Qwen3.8-27B FP8 with DFlash2 remains the second
 supported profile, unchanged. The target is RTX PRO 6000 Blackwell with one
@@ -20,12 +20,9 @@ and a saved explicit choice is always preserved.
 
 **The native verify width is fixed by active concurrency:** block 8 for a
 single running request, block 4 for every batch of two or more, read from the
-bundled policy `configs/pennyroyal/adaptive-next.json`, which the launch
-recipes pin by hash. `next-plain` routes the same way, just without the
-FR-Spec map. One candidate width per tier makes the width a lookup on the
-batch size, so the acceptance EMA can no longer switch a single request to a
-narrower draft between boots — the acceptance-driven C1 width switching of
-the 3.0-era policy is gone.
+bundled policy `configs/pennyroyal/adaptive-next.json`. `next-plain` uses the
+same widths without the FR-Spec map. A single request stays at width 8
+instead of switching widths with acceptance feedback.
 
 ## Flash-Next gets its own DFlash2 draft
 
@@ -113,17 +110,12 @@ conditions are in [RESULTS.md](RESULTS.md#penny-royal-31).
 | 63,906 tokens | 15,365.38 | 6,421.59 |
 | 489,921 tokens | 8,715.05 | 1,677.10 |
 
-The presentation workflow (agentic) completed end to end on the optional
-profile at FlashInfer verification and explicit medium: 70 model turns, all
-matched one-to-one against the retained timestamps, 132,873 output tokens
-including reasoning, prompt growth 42,527 to 206,219 tokens, and the finished
-deck previewed. Dated earlier 3.1 screens — the five-slide xhigh presentation
-(194.56 / 421.35), the coding flow (235.60 / 417.50) and the fixed-W4 rates —
-were recorded on the Triton verification path and keep their original labels
-in RESULTS.md; a medium-effort coding rerun did not complete and is not an
-accepted published benchmark. Reasoning-suite scores: 93.46/100 (Flash-Next,
-recorded on the DFlash2 qualification) and 96.94/100 (27B) on actual answer
-grading; recorded deviations are listed with the measurements.
+The agentic presentation completed 70 model turns and generated 132,873
+tokens, including reasoning, with medium reasoning selected. Conversation
+history grew from 42,527 to 206,219 tokens. The DFlash2 reasoning
+qualification scored 93.46/100 for Flash-Next and 96.94/100 for 27B.
+[RESULTS.md](RESULTS.md#penny-royal-31) records the qualification and earlier
+measurements.
 
 ## Updating
 
