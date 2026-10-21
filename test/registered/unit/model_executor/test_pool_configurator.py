@@ -11,9 +11,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from sglang.srt.configs.model_config import AttentionArch
-from sglang.srt.utils.common import ceil_align
 from sglang.srt.distributed.parallel_state_wrapper import ParallelState
 from sglang.srt.runtime_context import get_memory, get_parallel, get_server_args
+from sglang.srt.utils.common import ceil_align
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
@@ -1024,9 +1024,7 @@ class TestDflashDraftWindowBudget(CustomTestCase):
     # The next-dflash2 / 27b-dflash2 launch geometry.
     DRAFT_CELL = 8 * (128 + 128) * 5 * 1  # 8 kv heads, FP8 KV, 5 draft layers
 
-    def _dflash_runner(
-        self, *, draft_tokens=8, hybrid_swa=False, reqs=6, **kwargs
-    ):
+    def _dflash_runner(self, *, draft_tokens=8, hybrid_swa=False, reqs=6, **kwargs):
         """A DFLASH target double on the shipped profile geometry.
 
         ``hybrid_swa`` gives the target sliding-window layers so
@@ -1075,12 +1073,8 @@ class TestDflashDraftWindowBudget(CustomTestCase):
         mr = self._dflash_runner(hybrid_swa=True)
         with mock_cpu_env(kv_size=1, swa_eviction_interval=128):
             from sglang.srt.model_executor.pool_configurator import (
-                create_memory_pool_configurator,
-                dflash_draft_window_pool,
-            )
-
-            from sglang.srt.model_executor.pool_configurator import (
                 SWAChunkCapPoolConfigurator,
+                dflash_draft_window_pool,
             )
 
             cfg = SWAChunkCapPoolConfigurator(mr)
@@ -1104,12 +1098,8 @@ class TestDflashDraftWindowBudget(CustomTestCase):
         mr = self._dflash_runner(hybrid_swa=True)
         with mock_cpu_env(kv_size=1, swa_eviction_interval=128):
             from sglang.srt.model_executor.pool_configurator import (
-                create_memory_pool_configurator,
-                dflash_draft_window_pool,
-            )
-
-            from sglang.srt.model_executor.pool_configurator import (
                 SWAChunkCapPoolConfigurator,
+                dflash_draft_window_pool,
             )
 
             cfg = SWAChunkCapPoolConfigurator(mr)
@@ -1160,9 +1150,7 @@ class TestDflashDraftWindowBudget(CustomTestCase):
             {"chunked_prefill_size": -1},
         ):
             self.assertIsNone(
-                self._budget(
-                    self._dflash_runner(**kwargs), swa_eviction_interval=128
-                ),
+                self._budget(self._dflash_runner(**kwargs), swa_eviction_interval=128),
                 kwargs,
             )
 

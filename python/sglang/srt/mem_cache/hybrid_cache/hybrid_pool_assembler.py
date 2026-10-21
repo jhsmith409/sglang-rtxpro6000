@@ -834,9 +834,7 @@ def build_hybrid_mamba_stack(
         for pool in params.mtp_draft_device_pools
         if hasattr(pool, "qsa_compressed_k_buffer_pool")
     )
-    hicache_gb = (
-        get_memory().hicache_size if host_budget_gb is None else host_budget_gb
-    )
+    hicache_gb = get_memory().hicache_size if host_budget_gb is None else host_budget_gb
     kv_host_size, mamba_host_size = None, 0
     if hicache_gb > 0:
         if qsa_pool is None:
@@ -858,9 +856,7 @@ def build_hybrid_mamba_stack(
             )
             mamba_device_bytes = mamba_pool.get_kv_size_bytes()
             total_device_bytes = kv_device_bytes + qsa_device_bytes + mamba_device_bytes
-            mamba_host_size = (
-                hicache_gb * mamba_device_bytes / total_device_bytes
-            )
+            mamba_host_size = hicache_gb * mamba_device_bytes / total_device_bytes
             mamba_host_size = _bias_mamba_host_size(mamba_host_size)
             kv_qsa_budget = hicache_gb - mamba_host_size
             kv_bytes_per_token = (
@@ -1897,9 +1893,9 @@ class _PlainKvStrategy(StackStrategy):
             cache_controller=cache_controller,
             component_host_pools=component_host_pools,
             transfer_layer_num=len(full_layer_mapping),
-            pools_desc="KV + draft SWA"
-            if params.draft_swa_device_pool is not None
-            else "KV",
+            pools_desc=(
+                "KV + draft SWA" if params.draft_swa_device_pool is not None else "KV"
+            ),
         )
 
 
