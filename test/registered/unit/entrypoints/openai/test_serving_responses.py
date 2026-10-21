@@ -55,7 +55,9 @@ class InputMessageConstructionTestCase(CustomTestCase):
                         request, None, serving.tokenizer_manager.tokenizer
                     )
                 )
-                kwargs = serving.tokenizer_manager.tokenizer.apply_chat_template.call_args.kwargs
+                kwargs = (
+                    serving.tokenizer_manager.tokenizer.apply_chat_template.call_args.kwargs
+                )
                 self.assertEqual(kwargs["reasoning_effort"], expected)
 
     def test_previous_response_replays_assistant_text_not_instructions(self):

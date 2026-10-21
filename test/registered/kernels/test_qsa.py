@@ -2070,25 +2070,19 @@ def test_qsa_trtllm_sparse_packed_kv_scratch_is_zeroed(monkeypatch, stage, width
     def run(batch, rows, seq_lens):
         topk_indices = torch.stack([topk_row(s, c) for s, c in rows]).to(device)
         metadata = SimpleNamespace(
-            sequence_lengths=torch.tensor(
-                seq_lens, dtype=torch.int32, device=device
-            ),
+            sequence_lengths=torch.tensor(seq_lens, dtype=torch.int32, device=device),
             is_cuda_graph=False,
             row_req_pool_indices=None,
             fa2_valid_counts=None,
         )
-        query = torch.randn(
-            batch, 24, head_dim, dtype=torch.bfloat16, device=device
-        )
+        query = torch.randn(batch, 24, head_dim, dtype=torch.bfloat16, device=device)
         out = backend._forward_trtllm_sparse(
             query,
             k_pool,
             v_pool,
             layer,
             SimpleNamespace(
-                req_pool_indices=torch.arange(
-                    batch, dtype=torch.int32, device=device
-                )
+                req_pool_indices=torch.arange(batch, dtype=torch.int32, device=device)
             ),
             metadata,
             topk_indices,
@@ -2145,9 +2139,9 @@ def test_qsa_trtllm_sparse_packed_kv_scratch_is_zeroed(monkeypatch, stage, width
         run(1, [(0, 25)], [25])
     else:
         run(2, [(0, 25), (width, 8)], [25, width + 8])
-    assert scratch()[0].data_ptr() == stable_k.data_ptr(), (
-        "reuse must keep the stable scratch pointer"
-    )
+    assert (
+        scratch()[0].data_ptr() == stable_k.data_ptr()
+    ), "reuse must keep the stable scratch pointer"
     assert scratch()[1].data_ptr() == stable_v.data_ptr()
 
 
