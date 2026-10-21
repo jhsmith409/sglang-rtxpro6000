@@ -118,7 +118,9 @@ class TestHeldRowAdmission(CustomTestCase):
 
     def _admitted(self, disaggregation_mode, running, final_chunk, waiting, num_free):
         running_batch = ScheduleBatch(reqs=running)
-        s = self._scheduler(disaggregation_mode, running, final_chunk, waiting, num_free)
+        s = self._scheduler(
+            disaggregation_mode, running, final_chunk, waiting, num_free
+        )
 
         def capture(can_run_list, *args, **kwargs):
             raise _BatchBuilt(list(can_run_list))
@@ -163,9 +165,7 @@ class TestHeldRowAdmission(CustomTestCase):
         self.assertTrue(batch_is_full)
 
     def test_held_rows_restore_the_pool_term_only(self):
-        s = self._scheduler(
-            DisaggregationMode.NULL, [], None, [], num_free=1
-        )
+        s = self._scheduler(DisaggregationMode.NULL, [], None, [], num_free=1)
         # Pool term: the held rows are given back.
         self.assertEqual(s.get_num_allocatable_reqs(0, num_held_rows=2), 3)
         # Pipeline/max-running term is never inflated by held rows.
