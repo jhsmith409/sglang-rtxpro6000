@@ -68,8 +68,9 @@ single running request, block 4 for two or more. The **KV pool is sized
 automatically** from profiled memory instead of a preset cap; an explicit
 `MAX_TOTAL_TOKENS` remains available. The native NEXTN MTP recipes still
 launch but are **deprecated**: no further updates or testing. Scheduler
-admission, stop-regex inside speculative blocks, mixed-probability requests
-and the DFlash2 TP2 capture path are fixed. See the
+admission, stop-regex inside speculative blocks and mixed-probability requests
+are fixed. TP2 is expected to work; it has not been tested on two-GPU
+hardware. See the
 [3.1 release notes](RELEASE_NOTES_3.1.md) for the full change list and the
 [configuration reference](CONFIGURATION.md) for every supported setting.
 
@@ -127,7 +128,7 @@ For 27B alternatives, see the [Swift 27B results](SWIFT-27B.md) and the
 
 ### Flash-Next 3.1
 
-**Presentation workflow: 194.56 tok/s mean, 421.35 peak (C1, block 6). Coding flow: 235.60 mean, 417.50 peak (C1, block 6).**
+**Presentation workflow (agentic): 194.56 tok/s mean, 421.35 peak (C1, block 6). Coding flow: 235.60 mean, 417.50 peak (C1, block 6).**
 
 Measured on one RTX PRO 6000 Blackwell, using our OrcaRouter ModelOpt NVFP4
 checkpoint, FR-Spec with DFlash2, a 524K context limit, and normal non-greedy
@@ -136,11 +137,10 @@ other rows keep the source and width of the screen that recorded them.
 
 | Workload | Mean tok/s | Sampled peak tok/s |
 |---|---:|---:|
-| Presentation workflow, C1 W6 | **194.56** | **421.35** |
+| Presentation workflow (agentic), C1 W6 | **194.56** | **421.35** |
 | Coding flow, C1 W6 | **235.60** | **417.50** |
-| Single request, fixed W4 | 214.18 | 306.44 |
+| Single request, C1 fixed W4 | 214.18 | 306.44 |
 | Six concurrent requests, aggregate, fixed W4 | 566.14 | 657.52 |
-| Reasoning request, C1 W4 | 210.24 | 300.79 |
 
 These are **SGLang's native generation rates**, including reasoning. Prefill,
 tool execution, and idle time are separate. The presentation completed end to
@@ -167,7 +167,6 @@ Current recorded performance on one RTX PRO 6000, fixed block 8:
 |---|---:|---:|
 | Single request | **133.06** | **232.07** |
 | Four concurrent requests, aggregate | **459.74** | **570.73** |
-| Reasoning request, C1 | 125.88 | 215.93 |
 
 | Cold prompt | Mean prefill tok/s |
 |---|---:|

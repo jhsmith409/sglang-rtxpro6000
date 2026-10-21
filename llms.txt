@@ -22,9 +22,8 @@ identity and publication status.
 ## Hardware and profiles
 
 The inference target is RTX PRO 6000 Blackwell (SM120), TP1 or TP2. TP2 is
-expected to work; it has not been tested on two-GPU hardware, and the DFlash2
-capture path no longer rejects `tp_size > 1`. Ampere and Ada Lovelace are
-retained in the narrowed build for optional sidecar image preprocessing, not as
+part of the DFlash2 capability: it is expected to work; it has not been tested
+on two-GPU hardware. Ampere and Ada Lovelace are retained in the narrowed build for optional sidecar image preprocessing, not as
 alternative inference targets. CPU image processing is also available. Local
 performance measurements use TP1; community TP2 measurements are attributed
 separately.
@@ -77,21 +76,21 @@ the actual reasoning settings. A synthetic agent transcript is not a real
 tool workflow.
 
 Current Flash-Next results on one RTX PRO 6000: the completed five-slide
-presentation at C1 with the block-6 width on the final candidate (`a60f442`)
-recorded 194.56 tok/s mean / 421.35 sampled peak; the coding flow at C1 W6
-recorded 235.60 / 417.50 (`5ca3f39`); regular single-request screens with fixed
-W4 recorded 214.18 / 306.44; the full six-request batch (aggregate, W4)
-recorded 566.14 / 657.52. Current 27B results at fixed W8 (`27f9eaa`):
-133.06 / 232.07 single request, 459.74 / 570.73 full four-request aggregate,
-125.88 / 215.93 reasoning. Each row keeps its recorded source and width label;
-see RESULTS.md for the exact conditions.
+presentation workflow (agentic) at C1 with the block-6 width on the final
+candidate (`a60f442`) recorded 194.56 tok/s mean / 421.35 sampled peak; the
+coding flow at C1 W6 recorded 235.60 / 417.50 (`5ca3f39`); the regular
+single-request screen at C1 with fixed W4 recorded 214.18 / 306.44; the full
+six-request batch (aggregate, W4) recorded 566.14 / 657.52. Current 27B
+results at fixed W8 (`27f9eaa`): 133.06 / 232.07 single request, 459.74 /
+570.73 full four-request aggregate. Each row keeps its recorded source and
+width label; see RESULTS.md for the exact conditions.
 
 The reasoning suite scored 93.46/100 (Flash-Next) and 96.94/100 (27B) with
 actual answer grading on the qualified sources; extended or repetitive
 reasoning is not penalized and `ask_user` is a valid tool choice. Recorded
 deviations are listed with the measurements.
 
-- [3.1 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.1.md): Flash-Next DFlash2 default, fixed concurrency widths, automatic KV sizing, MTP deprecation, TP2 correction and focused scheduler fixes.
+- [3.1 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.1.md): Flash-Next DFlash2 default, fixed concurrency widths, automatic KV sizing, MTP deprecation, TP2 support and focused scheduler fixes.
 - [3.1 machine-readable release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/release-3.1.json): Source identities, settings, reused qualification and pending publication status.
 - [3.0.2 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.0.2.md): Host-memory recovery, MTP switching and focused compatibility fixes.
 - [3.0.2 machine-readable release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/release-3.0.2.json): Source, qualification and container status.

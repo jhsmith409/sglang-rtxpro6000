@@ -87,9 +87,9 @@
       ]
     },
     {
-      "id": "tp2_capture_correction",
+      "id": "tp2_dflash2_support",
       "pr": 89,
-      "summary": "Remove the incorrect tp_size > 1 rejection from DFlash2 capture; ordinary TP2 already produces complete replicated hyper-connection state at the capture point. TP2 is expected to work; it has not been tested on two-GPU hardware.",
+      "summary": "Flash-Next DFlash2 supports ordinary TP2 capture using the complete replicated hyper-connection state. TP2 is expected to work; it has not been tested on two-GPU hardware.",
       "profiles": [
         "Flash-Next DFlash2"
       ]
@@ -201,7 +201,7 @@
   },
   "performance": {
     "native_mean_and_sampled_peak_tok_s": {
-      "flash_next_presentation_c1w6_final": [
+      "flash_next_presentation_agentic_c1w6_final": [
         194.56,
         421.35
       ],
@@ -217,10 +217,6 @@
         566.14,
         657.52
       ],
-      "flash_next_reasoning_c1_w4": [
-        210.24,
-        300.79
-      ],
       "27b_normal_c1_w8": [
         133.06,
         232.07
@@ -228,10 +224,6 @@
       "27b_full_c4_aggregate": [
         459.74,
         570.73
-      ],
-      "27b_reasoning_c1_w8": [
-        125.88,
-        215.93
       ]
     },
     "cold_prefill_server_tok_s": {
@@ -244,8 +236,8 @@
         "27b": 1677.1
       }
     },
-    "presentation_detail": "Real five-slide workflow on final source a60f442 at C1 W6: 121 model turns matched 121 server requests, 1,676 complete decode intervals over 909.385 s, 192,349 server output tokens including reasoning, prompt growth 42,637 to 253,267 tokens; total workflow time including tools and rendering was 33 minutes 25 seconds.",
-    "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak from the same window, including reasoning; normal non-greedy sampling. Rows keep their recorded source/configuration labels: 5ca3f39 for the FR-Spec fixed-W4 normal/full-C6 and W6 coding-flow screens, earlier 27f9eaa for the W4 reasoning and 27B fixed-W8 screens, and a60f442 for the presentation. C4/C6 rows are aggregate over the full running batch, not per-request rates. The corrected full-batch means supersede the earlier drain-inclusive 522.69/386.26 summaries. The coding-flow timing was accepted explicitly; its final handoff record was not retained, so that task's completion fact is recorded separately from the measurement.",
+    "presentation_detail": "Real agentic five-slide workflow on final source a60f442 at C1 W6: 121 model turns matched 121 server requests, 1,676 complete decode intervals over 909.385 s, 192,349 server output tokens including reasoning, prompt growth 42,637 to 253,267 tokens; total workflow time including tools and rendering was 33 minutes 25 seconds.",
+    "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak from the same window, including reasoning; normal non-greedy sampling. Rows keep their recorded source/configuration labels: 5ca3f39 for the FR-Spec fixed-W4 normal/full-C6 and W6 coding-flow screens, earlier 27f9eaa for the 27B fixed-W8 screens, and a60f442 for the presentation. C4/C6 rows are aggregate over the full running batch, not per-request rates. The corrected full-batch means supersede the earlier drain-inclusive 522.69/386.26 summaries. The coding-flow timing was accepted explicitly; its final handoff record was not retained, so that task's completion fact is recorded separately from the measurement.",
     "completion_facts": "The presentation workflow completed end to end on a60f442 with all 121 turns matched one-to-one; the coding-flow completion fact is recorded in the qualification notes, separate from its accepted timing.",
     "hardware_note": "All local numbers are one RTX PRO 6000 at TP1; TP2 is expected to work and has not been tested on two-GPU hardware."
   },

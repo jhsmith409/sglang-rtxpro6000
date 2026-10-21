@@ -19,6 +19,8 @@ image-workload headroom, 6 requests / 36 Mamba slots, a 2,048-token draft
 window, and draft GPU KV bounded to the sliding window without taking host
 HiCache capacity (PR91, PR92).
 
+TP2 is expected to work; it has not been tested on two-GPU hardware.
+
 **Verification widths are fixed by active concurrency:** block 6 for a single
 running request, block 4 for every batch of two or more, read from the bundled
 policy `configs/pennyroyal/adaptive-dflash2.json`.
@@ -46,12 +48,6 @@ the two paths produced the number you are reading.
   DFlash2 block sizes (PR96).
 - Mixing token-probability requests with ordinary generation no longer
   triggers the identified scheduler crash (PR97).
-- The incorrect `tp_size > 1` rejection is removed from the DFlash2 capture
-  path (PR89): ordinary TP2 already produces complete replicated
-  hyper-connection state at the capture point. TP2 is expected to work; it has
-  not been tested on two-GPU hardware. The launcher still refuses a TP size the
-  visible GPUs cannot serve, and a sidecar preprocessing GPU stays outside the
-  TP pair.
 - The agreed upstream-fix subset (PR79) lands QSA cache-restore ordering and
   packed-scratch initialization, the shared Chat/Responses `chat_template`
   trust gate, absent `tool_calls` fields, stable stream timestamps, 400
@@ -70,14 +66,12 @@ sampling. Full conditions and source labels are in
 
 | Profile / workload | Mean tok/s | Sampled peak tok/s |
 |---|---:|---:|
-| Flash-Next DFlash2 — presentation workflow, C1 W6 (final candidate source `a60f442`) | **194.56** | **421.35** |
+| Flash-Next DFlash2 — presentation workflow (agentic), C1 W6 (final candidate source `a60f442`) | **194.56** | **421.35** |
 | Flash-Next — coding flow, C1 W6 (`5ca3f39`) | 235.60 | 417.50 |
-| Flash-Next — single request, W4 (`5ca3f39`) | 214.18 | 306.44 |
+| Flash-Next — single request, C1 W4 (`5ca3f39`) | 214.18 | 306.44 |
 | Flash-Next — full six-request batch, aggregate, W4 (`5ca3f39`) | 566.14 | 657.52 |
-| Flash-Next — reasoning request, W4 (earlier `27f9eaa`) | 210.24 | 300.79 |
 | 27B DFlash2 — single request, fixed W8 (`27f9eaa`) | 133.06 | 232.07 |
 | 27B DFlash2 — full four-request batch, aggregate (`27f9eaa`) | 459.74 | 570.73 |
-| 27B DFlash2 — reasoning request, fixed W8 (`27f9eaa`) | 125.88 | 215.93 |
 
 | Cold prompt | Flash-Next prefill tok/s | 27B prefill tok/s |
 |---|---:|---:|
@@ -85,11 +79,11 @@ sampling. Full conditions and source labels are in
 | 489,921 tokens | 8,715.05 | 1,677.10 |
 
 Both profiles completed the recorded reasoning, tool, vision, long-context and
-RAM/NIXL restore checks on the qualified sources. The presentation workflow ran
-end to end at block 6: 121 model turns, all matched one-to-one against the
-retained timestamps, 192,349 output tokens including reasoning, prompt growth
-42,637 to 253,267 tokens. Reasoning-suite scores: 93.46/100 (Flash-Next) and
-96.94/100 (27B) on actual answer grading; recorded deviations are listed with
+RAM/NIXL restore checks on the qualified sources. The presentation workflow
+(agentic) ran end to end at block 6: 121 model turns, all matched one-to-one
+against the retained timestamps, 192,349 output tokens including reasoning,
+prompt growth 42,637 to 253,267 tokens. Reasoning-suite scores: 93.46/100
+(Flash-Next) and 96.94/100 (27B) on actual answer grading; recorded deviations are listed with
 the measurements.
 
 ## Updating

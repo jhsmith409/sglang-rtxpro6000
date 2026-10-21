@@ -11,9 +11,9 @@
   page-aligned override. Draft GPU KV is bounded to its sliding window while
   ordinary host HiCache capacity is preserved.
 - Scheduler admission accounting, stop-regex inside accepted speculative
-  blocks, and mixed token-probability requests are fixed; the DFlash2 capture
-  path no longer rejects TP2, which is expected to work but has not been
-  tested on two-GPU hardware.
+  blocks, and mixed token-probability requests are fixed.
+- TP2 is part of the new Flash-Next DFlash2 capability: it is expected to
+  work and has not been tested on two-GPU hardware.
 - The native NEXTN MTP Flash-Next profiles remain launchable with unchanged
   recipes and are deprecated: no further updates or testing.
 
