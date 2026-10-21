@@ -103,6 +103,7 @@ class _MockTokenizerManager:
             reasoning_parser=None,
             stream_response_default_include_usage=False,
             default_chat_template_kwargs=None,
+            trust_request_chat_template=False,
         )
         self.model_path = self.server_args.model_path
         # The manager tracks the served name itself; a weight update rewrites it.
@@ -1564,6 +1565,7 @@ class ServingChatTestCase(unittest.TestCase):
             content=content,
             request=request,
             index=0,
+            created=123,
         )
 
         # Should return a chunk with remaining arguments
@@ -1617,6 +1619,7 @@ class ServingChatTestCase(unittest.TestCase):
             content=content,
             request=request,
             index=0,
+            created=123,
         )
 
         # Should return None since no completion is needed
@@ -1655,6 +1658,7 @@ class ServingChatTestCase(unittest.TestCase):
             content=content,
             request=request,
             index=0,
+            created=123,
         )
 
         self.assertIsNone(result, "Should not append encoded quotes")
@@ -1690,6 +1694,7 @@ class ServingChatTestCase(unittest.TestCase):
             content=content,
             request=request,
             index=0,
+            created=123,
         )
 
         self.assertIsNotNone(result, "Should return chunk with remaining arguments")
@@ -1725,6 +1730,7 @@ class ServingChatTestCase(unittest.TestCase):
             content=content,
             request=request,
             index=0,
+            created=123,
         )
 
         # Should return None since there's no parser data
@@ -2076,6 +2082,7 @@ class ServingChatTestCase(unittest.TestCase):
                     content={"meta_info": {"id": "chatcmpl-test"}},
                     request=req,
                     has_tool_calls={},
+                    created=123,
                 )
                 # Get first yielded SSE line
                 line = None
@@ -2552,12 +2559,41 @@ class ServingChatTestCase(unittest.TestCase):
                 parsed.append(json.loads(c[len("data: ") :]))
         return parsed
 
+    def test_streaming_created_is_stable_across_chunks(self):
+        req = ChatCompletionRequest(
+            model="x",
+            messages=[{"role": "user", "content": "Hi?"}],
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+
+        with patch(
+            "sglang.srt.entrypoints.openai.serving_chat.time.time",
+            side_effect=[100, 101, 102, 103],
+        ) as current_time:
+            chunks = self._run_chat_stream(Mock(), req)
+
+        parsed = self._parse_chunks(chunks)
+        self.assertGreater(len(parsed), 1)
+        identities = {
+            (chunk["id"], chunk["created"], chunk["model"]) for chunk in parsed
+        }
+        self.assertEqual(len(identities), 1)
+        response_id, created, model = identities.pop()
+        self.assertTrue(response_id)
+        self.assertEqual((created, model), (100, "x"))
+        self.assertTrue(
+            any(not chunk["choices"] and chunk.get("usage") for chunk in parsed)
+        )
+        current_time.assert_called_once_with()
+
     async def _collect_stream_content(self, content, choice_logprobs, req):
         chunks = []
         async for chunk in self.chat._generate_stream_content(
             content=content,
             index=0,
             request=req,
+            created=123,
             stream_offsets={},
             reasoning_parser_dict={},
             parser_dict={},
@@ -3208,6 +3244,7 @@ class ServingChatTestCase(unittest.TestCase):
                 content=content,
                 index=0,
                 request=req,
+                created=123,
                 stream_offsets={},
                 reasoning_parser_dict={},
                 parser_dict={},
@@ -4000,6 +4037,76 @@ class InklingReasoningEffortTest(unittest.TestCase):
             prompt_ids[-1],
             INKLING_SPECIAL_TOKEN_IDS["<|content_model_end_sampling|>"],
         )
+
+
+class TestRequestChatTemplateTrustGate(unittest.TestCase):
+    def setUp(self):
+        self.tm = _MockTokenizerManager()
+        self.chat = OpenAIServingChat(self.tm, _MockTemplateManager())
+
+    def _request(self, **kwargs):
+        return ChatCompletionRequest(
+            model="test-model", messages=[{"role": "user", "content": "hi"}], **kwargs
+        )
+
+    def test_rejected_by_default(self):
+        for template in ("{{ messages }}", "", None):
+            with self.subTest(template=template):
+                error = self.chat._validate_request(
+                    self._request(chat_template_kwargs={"chat_template": template})
+                )
+                self.assertIn("--trust-request-chat-template", error)
+
+    def test_allowed_when_trusted(self):
+        self.tm.server_args.trust_request_chat_template = True
+        self.assertIsNone(
+            self.chat._validate_request(
+                self._request(chat_template_kwargs={"chat_template": "{{ messages }}"})
+            )
+        )
+
+    def test_other_kwargs_unchanged(self):
+        for kwargs in (None, {}, {"enable_thinking": False}, {"chat_templates": "x"}):
+            with self.subTest(kwargs=kwargs):
+                self.assertIsNone(
+                    self.chat._validate_request(
+                        self._request(chat_template_kwargs=kwargs)
+                    )
+                )
+
+    def _render(self, **kwargs):
+        rendered = MessageProcessingResult(
+            prompt="prompt",
+            prompt_ids=[1, 2, 3],
+            image_data=None,
+            audio_data=None,
+            video_data=None,
+            modalities=[],
+            stop=[],
+        )
+        with patch.object(
+            self.chat, "_apply_conversation_template", return_value=rendered
+        ) as render:
+            self.chat._process_messages(self._request(**kwargs), is_multimodal=False)
+        return render
+
+    def test_process_messages_rejects_untrusted_template(self):
+        # /v1/responses, /v1/tokenize and the Anthropic handler reach this
+        # shared preprocessing step without going through _validate_request,
+        # so the policy has to hold here too, before anything is rendered.
+        with self.assertRaises(ValueError) as ctx:
+            self._render(chat_template_kwargs={"chat_template": "{{ messages }}"})
+        self.assertIn("--trust-request-chat-template", str(ctx.exception))
+
+    def test_process_messages_renders_trusted_template(self):
+        self.tm.server_args.trust_request_chat_template = True
+        render = self._render(chat_template_kwargs={"chat_template": "{{ messages }}"})
+        render.assert_called_once()
+
+    def test_process_messages_renders_ordinary_kwargs(self):
+        for kwargs in (None, {}, {"enable_thinking": False}, {"chat_templates": "x"}):
+            with self.subTest(kwargs=kwargs):
+                self._render(chat_template_kwargs=kwargs)
 
 
 if __name__ == "__main__":

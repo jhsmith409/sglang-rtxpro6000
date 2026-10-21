@@ -862,10 +862,14 @@ class BaseMultimodalProcessor(ABC):
                 if isinstance(img, torch.Tensor):
                     return img  # JPEG already decoded on GPU by nvJPEG
                 # PIL decodes lazily; do it here in the io worker so the decode
-                # doesn't run later on the event-loop thread.
-                if discard_alpha_channel and img.mode != "RGB":
-                    return img.convert("RGB")
-                img.load()
+                # doesn't run later on the event-loop thread. A truncated or
+                # malformed image fails here, so report it as a client error.
+                try:
+                    if discard_alpha_channel and img.mode != "RGB":
+                        return img.convert("RGB")
+                    img.load()
+                except (OSError, SyntaxError) as e:
+                    raise ValueError(f"Could not decode image: {e}") from e
                 return img
             elif modality == Modality.VIDEO:
                 return load_video(data, frame_count_limit)

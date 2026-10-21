@@ -95,7 +95,9 @@ class TestPrefillAdder(CustomTestCase):
         req.prefix_indices = []
         req.full_untruncated_fill_ids = []
         req.output_ids = [0] * output_len
-        req.sampling_params = SimpleNamespace(max_new_tokens=max_new_tokens)
+        req.sampling_params = SimpleNamespace(
+            max_new_tokens=max_new_tokens, ignore_eos=False
+        )
         req.time_stats = SimpleNamespace(wait_queue_entry_time=wait_time)
         req.retracted_stain = False
         req.host_hit_length = 0
@@ -118,6 +120,16 @@ class TestPrefillAdder(CustomTestCase):
         )
         defaults.update(kwargs)
         return PrefillAdder(**defaults)
+
+    def test_ignore_eos_running_request_reserves_all_remaining_tokens(self):
+        # The early-EOS ratio must not shrink a fixed-length request's reservation.
+        normal = self.create_mock_req("normal", 0, 400, output_len=100)
+        fixed = self.create_mock_req("fixed", 0, 400, output_len=100)
+        fixed.sampling_params.ignore_eos = True
+        adder = self.create_adder(
+            self.create_running_batch([normal, fixed]), new_token_ratio=0.1
+        )
+        self.assertAlmostEqual(adder.rem_total_token_offset, 300 * 0.1 + 300)
 
     def test_preempt_success_high_priority_values_first(self):
         params = [

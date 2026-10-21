@@ -823,9 +823,7 @@ class Qwen3CoderDetector(BaseFormatDetector):
             ):
                 name_end = current_slice.find(">")
                 if name_end != -1:
-                    param_name = current_slice[
-                        len(self.parameter_prefix) : name_end
-                    ]
+                    param_name = current_slice[len(self.parameter_prefix) : name_end]
                     param_config = self._get_arguments_config(
                         self.current_func_name, tools
                     )

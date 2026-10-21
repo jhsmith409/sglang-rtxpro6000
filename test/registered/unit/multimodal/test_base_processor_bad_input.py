@@ -9,10 +9,12 @@ from sglang.test.ci.ci_register import register_cpu_ci
 register_cpu_ci(est_time=10, suite="base-a-test-cpu")
 
 import binascii
+import io
 import unittest
 from unittest.mock import MagicMock, patch
 
 import requests
+from PIL import Image
 
 from sglang.srt.managers.schedule_batch import Modality
 from sglang.srt.multimodal.processors.base_processor import BaseMultimodalProcessor
@@ -61,6 +63,26 @@ class TestBadInputIsClientError(CustomTestCase):
     def test_undecodable_image_bytes(self):
         # PIL raises UnidentifiedImageError, an OSError -- not a ValueError.
         self._assert_client_error(b"definitely not an image", Modality.IMAGE)
+
+    def test_truncated_or_corrupt_image_bytes(self):
+        # Header parses but the lazy decode fails: truncated data is an OSError,
+        # a corrupt chunk a SyntaxError. Both are the client's bad input.
+        buf = io.BytesIO()
+        Image.new("RGB", (16, 16), (10, 120, 200)).save(buf, format="PNG")
+        valid_png = buf.getvalue()
+        broken_chunk_png = bytearray(valid_png)
+        idat_pos = broken_chunk_png.index(b"IDAT")
+        broken_chunk_png[idat_pos - 1] -= 6
+
+        img = _StubProcessor._load_single_item(valid_png, Modality.IMAGE)
+        self.assertEqual(img.size, (16, 16))
+        for image_bytes in (
+            b"",
+            valid_png[: len(valid_png) // 2],
+            bytes(broken_chunk_png),
+        ):
+            with self.subTest(length=len(image_bytes)):
+                self._assert_client_error(image_bytes, Modality.IMAGE)
 
     def test_undecodable_audio_bytes(self):
         # soundfile raises LibsndfileError, a RuntimeError -- not a ValueError.

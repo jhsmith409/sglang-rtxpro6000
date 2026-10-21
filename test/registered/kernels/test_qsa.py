@@ -1937,6 +1937,214 @@ def test_qsa_chunk_prefill_accepts_fp8_kv_cache():
     torch.testing.assert_close(actual, torch.stack(expected_rows), rtol=3e-2, atol=3e-2)
 
 
+def _qsa_gathered_valid_reference(
+    query, k_pool, v_pool, req_to_token, topk_rows, seq_lens, scaling, groups
+):
+    """Gathered valid-token attention, computed without the packed scratch.
+
+    Per row: keep only selected tokens inside the context, resolve them
+    through req_to_token, and run the explicit GQA softmax in fp32.  Softmax
+    is permutation-invariant, so packing order never enters here.
+    """
+    rows = []
+    for row, (topk_row, length) in enumerate(
+        zip(topk_rows.tolist(), seq_lens.tolist())
+    ):
+        tokens = [t for t in topk_row if 0 <= t < length]
+        assert tokens, "fixture rows must keep at least one valid token"
+        slots = req_to_token[row, torch.tensor(tokens, dtype=torch.long)]
+        keys = k_pool[slots].float().repeat_interleave(groups, dim=1)
+        values = v_pool[slots].float().repeat_interleave(groups, dim=1)
+        scores = torch.einsum("hd,khd->hk", query[row].float(), keys) * scaling
+        rows.append(
+            torch.einsum("hk,khd->hd", scores.softmax(-1), values)
+            .to(query.dtype)
+            .reshape(-1)
+        )
+    return torch.stack(rows)
+
+
+@pytest.mark.parametrize("stage", ["initial", "growth"])
+@pytest.mark.parametrize(
+    "width", (65, FINAL_TOPK), ids=("topk65_stride128", "topk2051_stride2112")
+)
+def test_qsa_trtllm_sparse_packed_kv_scratch_is_zeroed(monkeypatch, stage, width):
+    """Packed sparse-decode K/V scratch must be zeroed on allocation and growth.
+
+    _forward_trtllm_sparse packs each row's selected K/V into the shared
+    _get_fa2_scratch buffer only up to the row's valid count, but the paged
+    decode reads whole 64-token pages, so the tail of every row's partial
+    last page is bytes the gather never writes.  Commit 6f12a9d67 (the
+    zero-fill part of upstream sgl-project/sglang#38851) changed exactly
+    these allocations from torch.empty to torch.zeros so stale bytes cannot
+    decode to FP8 NaN (0 x NaN poisons the attention sum), but shipped
+    without a regression test.  This wraps torch.empty with a shape/dtype-
+    scoped NaN poison, so on the pre-fix tree the unwritten tail is
+    deterministically non-zero and the buffer-content asserts below fail at
+    the exact allocation (``initial``) or growth (``growth``) step.
+
+    Measured on SM120 (RTX PRO 6000), the installed FlashInfer resolves to
+    the XQA kernel (xqa bf16-input / e4m3-kv / page 64 / head_dim 256 /
+    group 12), which keeps outputs finite even with stale scratch tails:
+    there the zero-padding contract is what regresses, while the upstream
+    trtllm-gen kernel poisons the row.  The finite-output and independent
+    gathered valid-token reference asserts stay regardless -- they pin the
+    valid-count masking (and would catch row poisoning on a trtllm-gen
+    build) without relying on either kernel's NaN behavior.
+
+    Widths: 65, the smallest width spanning two 64-token pages (stride
+    128), and Flash-Next's production FINAL_TOPK 2051 (stride 2112).  No
+    model loads: the real count/gather Triton kernels and the real
+    FlashInfer consumer run against a few-MiB fp8 pool.  After allocation
+    passes, the test packs MORE valid entries, then SHORTENS the valid
+    counts and reuses the stable buffers; padding staying zero on reuse is
+    deliberately NOT required -- previously valid finite K/V may become
+    stale padding, and no NaN is injected into cached padding after the
+    fresh allocations.
+    """
+    if not torch.cuda.is_available():
+        pytest.skip("packed-KV scratch zeroing exercises CUDA kernels")
+    trtllm_decode = qsa_backend_module._resolve_trtllm_sparse_decode()
+    if trtllm_decode is None:
+        pytest.skip("FlashInfer trtllm/XQA paged decode requires SM100/SM120")
+
+    page = qsa_backend_module._TRTLLM_SPARSE_PAGE_SIZE
+    num_kv_heads, head_dim = 2, 256
+    stride = ((width + page - 1) // page) * page
+    fp8 = torch.float8_e4m3fn
+    device = torch.device("cuda")
+
+    torch.manual_seed(13)
+    # Request r's logical token t lives at physical slot 2*width*r + t; the
+    # 4*width-row fp8 pool is ~4 MiB at width 2051, and the batch-2 scratch
+    # pair ~4 MiB.  Pools are built before the empty() patch below.
+    k_pool = torch.randn(
+        4 * width, num_kv_heads, head_dim, dtype=torch.bfloat16, device=device
+    ).to(fp8)
+    v_pool = torch.randn(
+        4 * width, num_kv_heads, head_dim, dtype=torch.bfloat16, device=device
+    ).to(fp8)
+    req_to_token = (
+        torch.arange(2, dtype=torch.int32, device=device)[:, None] * (2 * width)
+        + torch.arange(2 * width, dtype=torch.int32, device=device)[None, :]
+    ).contiguous()
+    backend = QwenSparseAttnBackend.__new__(QwenSparseAttnBackend)
+    backend._fa2_scratch = {}
+    backend._trtllm_sparse_tables = {}
+    backend._cuda_graph_max_tokens = 0
+    backend.req_to_token_pool = SimpleNamespace(req_to_token=req_to_token)
+    layer = SimpleNamespace(scaling=head_dim**-0.5)
+
+    # Poison only fresh packed-K/V scratch: fp8, (rows, num_kv_heads,
+    # head_dim).  The int32 count/table buffers, the 1-D uint8 trtllm
+    # workspace, and the bf16 decode output fall outside the predicate.
+    # ``initial`` poisons the batch-1 first allocation (stride rows);
+    # ``growth`` zero-fills that one deterministically and poisons only
+    # the batch-2 growth reallocation (2 * stride rows).
+    poison_from = stride if stage == "initial" else 2 * stride
+    real_empty = torch.empty
+
+    def _poisoned_empty(*args, **kwargs):
+        tensor = real_empty(*args, **kwargs)
+        if (
+            tensor.dtype == fp8
+            and tensor.dim() == 3
+            and tuple(tensor.shape[1:]) == (num_kv_heads, head_dim)
+        ):
+            tensor.fill_(float("nan") if tensor.shape[0] >= poison_from else 0.0)
+        return tensor
+
+    monkeypatch.setattr(torch, "empty", _poisoned_empty)
+
+    def topk_row(start, count):
+        row = torch.full((width,), -1, dtype=torch.int32)
+        row[:count] = torch.arange(start, start + count, dtype=torch.int32)
+        return row
+
+    def scratch():
+        # KeyError if the scratch layout drifted from the poisoned shape.
+        cached = backend._fa2_scratch[(num_kv_heads, head_dim, fp8, k_pool.device)]
+        assert cached[0].shape[1:] == (num_kv_heads, head_dim)
+        return cached
+
+    def run(batch, rows, seq_lens):
+        topk_indices = torch.stack([topk_row(s, c) for s, c in rows]).to(device)
+        metadata = SimpleNamespace(
+            sequence_lengths=torch.tensor(seq_lens, dtype=torch.int32, device=device),
+            is_cuda_graph=False,
+            row_req_pool_indices=None,
+            fa2_valid_counts=None,
+        )
+        query = torch.randn(batch, 24, head_dim, dtype=torch.bfloat16, device=device)
+        out = backend._forward_trtllm_sparse(
+            query,
+            k_pool,
+            v_pool,
+            layer,
+            SimpleNamespace(
+                req_pool_indices=torch.arange(batch, dtype=torch.int32, device=device)
+            ),
+            metadata,
+            topk_indices,
+            trtllm_decode,
+        )
+        torch.cuda.synchronize()
+        assert torch.isfinite(out).all(), (
+            f"packed-{stage} scratch leaked non-finite bytes through the "
+            "paged decode"
+        )
+        reference = _qsa_gathered_valid_reference(
+            query.cpu(),
+            k_pool.cpu(),
+            v_pool.cpu(),
+            req_to_token.cpu(),
+            topk_indices.cpu(),
+            torch.tensor(seq_lens, dtype=torch.int32),
+            layer.scaling,
+            24 // num_kv_heads,
+        )
+        torch.testing.assert_close(out.cpu(), reference, rtol=3e-2, atol=3e-2)
+        return out
+
+    # 1. Initial allocation, batch 1: 41 valid tokens leave a 23-token
+    # unwritten tail in the single visible page.
+    run(1, [(0, 41)], [41])
+    base_k, base_v = scratch()
+    if stage == "initial":
+        assert base_k[41:].to(torch.float32).eq(0).all()
+        assert base_v[41:].to(torch.float32).eq(0).all()
+
+    # 2. Pack every selected column (each row now fills its full pages plus
+    # a partial last page); ``growth`` adds the second request, forcing the
+    # reallocation that ``initial`` never sees.
+    if stage == "initial":
+        run(1, [(0, width)], [width])
+    else:
+        run(2, [(0, width), (width, width)], [width, 2 * width])
+        grown_k, grown_v = scratch()
+        assert grown_k.data_ptr() != base_k.data_ptr(), "growth must reallocate"
+        # Zeroed once, on the fresh (grown) allocation: both rows' tail
+        # columns past the written prefix.
+        assert grown_k[width:stride].to(torch.float32).eq(0).all()
+        assert grown_v[width:stride].to(torch.float32).eq(0).all()
+        assert grown_k[stride + width :].to(torch.float32).eq(0).all()
+        assert grown_v[stride + width :].to(torch.float32).eq(0).all()
+
+    # 3. SHORTEN the valid counts on the stable buffers.  Columns 25..63
+    # of row 0 (and 8..63 of row 1 on growth) now hold stale-but-finite
+    # K/V from step 2; masking by the valid count -- not zero-on-reuse --
+    # must absorb them, so outputs stay finite and match the reference.
+    stable_k, stable_v = scratch()
+    if stage == "initial":
+        run(1, [(0, 25)], [25])
+    else:
+        run(2, [(0, 25), (width, 8)], [25, width + 8])
+    assert (
+        scratch()[0].data_ptr() == stable_k.data_ptr()
+    ), "reuse must keep the stable scratch pointer"
+    assert scratch()[1].data_ptr() == stable_v.data_ptr()
+
+
 def test_qsa_mtp_step_out_cache_loc_matches_draft_forward_layout():
     """Each MTP draft step's metadata must reference the same out_cache_loc
     slice EAGLEWorker.draft_forward assigns for that step. The failure mode

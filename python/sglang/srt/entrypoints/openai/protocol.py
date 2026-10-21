@@ -1230,6 +1230,13 @@ class ChatMessage(BaseModel):
     reasoning_content: Optional[str] = None
     tool_calls: Optional[List[ToolCall]] = Field(default=None, examples=[None])
 
+    @model_serializer(mode="wrap")
+    def _serialize(self, handler):
+        data = handler(self)
+        if self.tool_calls is None:
+            data.pop("tool_calls", None)
+        return data
+
 
 class ChatCompletionResponseChoice(BaseModel):
     index: int
@@ -1290,6 +1297,8 @@ class DeltaMessage(BaseModel):
         data = handler(self)
         if self.hidden_states is None:
             data.pop("hidden_states", None)
+        if self.tool_calls is None:
+            data.pop("tool_calls", None)
         return data
 
 
