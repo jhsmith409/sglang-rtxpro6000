@@ -1281,6 +1281,35 @@ class LauncherTests(FixtureMixin):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIn("raw=8 effective=8", capture.read_text())
 
+    def test_a_saved_token_cap_survives_the_reload_and_a_blank_means_automatic(self):
+        # MAX_TOTAL_TOKENS is now purely the operator's own cap: a saved value
+        # reaches the recipe verbatim, and a saved blank suppresses an ambient
+        # one so the Flash-Next launcher sizes the KV pool from the memory it
+        # profiles instead of reviving the removed 824,384 recipe preset.
+        capture = self.base / "cap capture"
+        stub = self.repo / "configs/pennyroyal/serve-flash-next-frspec.sh"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            'printf "cap=${MAX_TOTAL_TOKENS-<unset>}\\n" > "$CAPTURE"\n'
+        )
+        stub.chmod(0o755)
+        env = dict(os.environ, CAPTURE=str(capture), MAX_TOTAL_TOKENS="1048576")
+        for saved, expected in (("1000000", "cap=1000000"), ("", "cap=")):
+            with self.subTest(saved=saved):
+                self.write_native_config(
+                    {**self.native_env(), "MAX_TOTAL_TOKENS": saved}
+                )
+                run = subprocess.run(
+                    [str(ROOT / "run-penny"), "--config", str(self.config_path)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=env,
+                    cwd=str(ROOT),
+                )
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertEqual(capture.read_text().strip(), expected)
+
     def test_run_penny_show_config_never_executes_the_recipe(self):
         capture = self.base / "never"
         stub = self.repo / "configs/pennyroyal/serve-flash-next-frspec.sh"

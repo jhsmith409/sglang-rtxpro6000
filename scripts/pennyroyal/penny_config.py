@@ -279,10 +279,10 @@ SHARED_KEYS: tuple[KeySpec, ...] = (
     ),
     KeySpec(
         "MAX_TOTAL_TOKENS",
-        "shared KV token cap (empty = recipe default)",
+        "shared KV token cap (empty = sized from profiled memory)",
         "positive-int",
         advanced=True,
-        prompt="Max total tokens (empty = recipe default)",
+        prompt="Max total tokens (empty = automatic KV sizing)",
     ),
 )
 

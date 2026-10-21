@@ -26,12 +26,14 @@ The two v2.5.0 options affect different memory surfaces:
 | NVMe PLE | The qualified 824,384-token KV pool and CUDA graphs were retained. | The 47.68 GiB FP8 PLE table lives in a prepared immutable SSD overlay, with bounded staging buffers and reclaimable filesystem cache. | Backend and overlay-manifest identity select a separate NIXL namespace. |
 
 The online-FP8 difference is about 3.86 GiB of post-graph available VRAM; the
-7.52 GiB value is the total remaining, not the amount newly freed. The primary
-FR-Spec recipe keeps 824,384 as its default cap. A separate
-`MAX_TOTAL_TOKENS=1000000` run allocated the full requested pool, retained
-524,288-token context and graphs, and passed the selected long-context,
-concurrency and CPU-media checks. It left 5.21 GiB after graphs and a minimum
-sampled 1,187 MiB during media work. The setting changes KV capacity; served
+7.52 GiB value is the total remaining, not the amount newly freed. Those runs
+carried the 824,384-token cap the FR-Spec recipe then defaulted to; the recipe
+now leaves KV sizing to the allocator unless `MAX_TOTAL_TOKENS` is supplied. A
+separate `MAX_TOTAL_TOKENS=1000000` run allocated the full requested pool,
+retained 524,288-token context and graphs, and passed the selected
+long-context, concurrency and CPU-media checks. It left 5.21 GiB after graphs
+and a minimum sampled 1,187 MiB during media work. The setting changes KV
+capacity; served
 context remains 524,288 tokens, and no speed comparison was run. The test used
 CPU media preprocessing.
 

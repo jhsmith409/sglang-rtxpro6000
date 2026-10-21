@@ -269,8 +269,8 @@ _EXPLANATIONS = {
     "it blank uses the recipe default",
     "MAX_MAMBA_CACHE_SIZE": "how many recurrent-state slots are kept; blank "
     "uses the recipe default",
-    "MAX_TOTAL_TOKENS": "the shared token cap for the KV pool; blank uses the "
-    "recipe default",
+    "MAX_TOTAL_TOKENS": "an optional cap on the shared KV pool; blank lets the "
+    "engine size it from the memory it profiles",
     "PENNY_BUILD_JOBS": "how many compile jobs the first start may run; blank "
     "uses the recipe default",
     "NIXL_PREFIX": "where NIXL is installed when that is outside the normal "

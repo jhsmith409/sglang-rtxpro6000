@@ -2,11 +2,11 @@
 
 `PENNY_PLE_BACKEND=ram` remains the default. Both Flash-Next launcher recipes
 also accept `nvme`; the 27B launcher is unchanged. This changes storage, not
-PLE precision or model weights. The FR-Spec recipe defaults to the qualified
-824,384-token KV cap; either recipe accepts a positive, page-64-aligned
-`MAX_TOTAL_TOKENS` override. The non-FR-Spec recipe leaves capacity automatic
-when the variable is unset. Startup logs remain the source of truth for actual
-capacity; the launcher does not silently shrink a requested cap.
+PLE precision or model weights. Both Flash-Next recipes leave KV capacity to
+the engine's memory-based sizing; either accepts a positive, page-64-aligned
+`MAX_TOTAL_TOKENS` override when you want a cap of your own. Startup logs
+remain the source of truth for actual capacity; the launcher does not silently
+shrink a requested cap.
 
 The FP8 PLE table occupies approximately47.68GiB when pinned in RAM. Streaming
 uses two16MiB row buffers, row-ID staging and a32MiB reader pool instead.

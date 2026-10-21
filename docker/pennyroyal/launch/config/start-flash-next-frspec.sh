@@ -38,6 +38,10 @@ export SGLANG_MM_PREPROCESS_DEVICE=cpu
 # whether /nixl is mounted; the two choices have to agree.
 NIXL=on
 # Flash-Next request/state capacity; the qualified pair is 4 requests/24 slots.
+# No KV cap is requested here: the pool is sized from the memory the engine
+# profiles. To cap it, give MAX_TOTAL_TOKENS a positive, page-64-aligned value
+# either below or as '-e MAX_TOTAL_TOKENS=...' in run.sh; a setting in this file
+# wins over that argument.
 MAX_RUNNING_REQUESTS=4
 MAX_MAMBA_CACHE_SIZE=24
 # ----------------------------------------------------------------------------
@@ -201,7 +205,13 @@ pennyroyal_check_tp_devices "$TP_SIZE" "$SGLANG_MM_PREPROCESS_DEVICE"
 # NVMe preflight imports Torch, Triton, FlashInfer and SGLang. Activate their
 # durable cache locations before selecting the optional backend.
 source "$IMAGE_CONFIGS/ple-backend.sh"
-configure_max_total_tokens 824384
+# No KV-token preset: unset or blank MAX_TOTAL_TOKENS (including the empty
+# value Compose forwards) leaves the pool to the sizing SGLang profiles from
+# the free memory, within the static memory fraction the launch line sets. A
+# deliberate -e MAX_TOTAL_TOKENS=<page-aligned value> stays opt-in and is still
+# validated; the qualified 824,384 tokens were the cap that boot asked for, and
+# an uncapped FR-Spec pool has not been measured.
+configure_max_total_tokens
 
 TARGET_OVERRIDES='{"text_config":{"rope_parameters":{"mrope_interleaved":true,"mrope_section":[11,11,10],"rope_type":"yarn","rope_theta":10000000,"partial_rotary_factor":0.25,"factor":2.0,"original_max_position_embeddings":262144}}}'
 printf 'Pennyroyal profile: Flash-Next FR-Spec\n  runtime: %s\n  target: %s\n  token map: %s\n  cache root: %s\n  NIXL root: %s\n' \

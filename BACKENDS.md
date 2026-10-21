@@ -159,7 +159,7 @@ listed in their own rows.
 | Draft vocabulary | unchanged DFlash2 | 65,536-ID FR-Spec map introduced in v2.3; full target vocabulary unchanged |
 | Served context | 524,288, factor-2 YaRN target and draft | 524,288, factor-2 YaRN |
 | KV page size | 64 | 64 |
-| Recipe default GPU KV capacity | 1,118,784 target and draft tokens | 824,384 target and native-MTP tokens |
+| Measured GPU KV capacity | 1,118,784 target and draft tokens, sized automatically | No cap requested; uncapped sizing not yet measured. The qualified boot requested 824,384 tokens explicitly |
 | Mamba capacity | 24 slots; maximum 5 retained states/path | 24 slots by default; optional C6 uses 36; `extra_buffer`, tracking interval 64 |
 | HiCache/NIXL | 96 GB configured host tier; target KV + Mamba/GDN + DFlash2 state | 32 GB configured host tier; packed target/native-MTP KV + GDN + PLE + QSA keys. PLE table placement is RAM by default or optional NVMe. |
 | Maximum active requests | 4 | 4 by default; [optional 6](RUN.md#optional-six-request-flash-next-profile) |

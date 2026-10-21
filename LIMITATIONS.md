@@ -23,10 +23,11 @@
 - Post-graph available VRAM was 7.52 GiB versus 3.66 GiB in an earlier matching
   option-off boot. The difference is about 3.86 GiB; 7.52 GiB is the total
   remaining after graphs. Both comparison arms used the 824,384-token pool.
-- The primary FR-Spec recipe retains an 824,384-token default cap. The explicit
-  1,000,000-token option passed startup, graph, long-context, concurrency and
-  CPU-media checks with online FP8 and one visible GPU. Other cap values and
-  combinations require their own evidence.
+- The 824,384-token pool in these runs was the recipe's default cap at the
+  time; the FR-Spec recipe now asks for none and keeps only an explicit
+  `MAX_TOTAL_TOKENS` cap. The explicit 1,000,000-token option passed startup,
+  graph, long-context, concurrency and CPU-media checks with online FP8 and one
+  visible GPU. Other cap values and combinations require their own evidence.
 - The 1,000,000-token option changes KV capacity, not the 524,288-token served-
   context limit. Its warmed C1 median was close to the earlier standard-pool
   observation, but the runs used different measurement windows. No speed

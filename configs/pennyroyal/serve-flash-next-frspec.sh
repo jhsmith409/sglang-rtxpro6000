@@ -159,7 +159,12 @@ pennyroyal_check_tp_devices "$TP_SIZE" "$SGLANG_MM_PREPROCESS_DEVICE"
 # NVMe preflight imports Torch, Triton, FlashInfer and SGLang. Activate their
 # durable cache locations before selecting the optional backend.
 source "$SCRIPT_DIR/ple-backend.sh"
-configure_max_total_tokens 824384
+# No KV-token preset: unset or blank MAX_TOTAL_TOKENS leaves the pool to the
+# sizing SGLang profiles from the free memory, within the static memory fraction
+# below. A deliberately exported cap stays opt-in and is still validated, and
+# the 824,384 tokens in the v2.3-v3.0.2 records were the cap those boots asked
+# for; an uncapped FR-Spec pool has not been measured.
+configure_max_total_tokens
 
 TARGET_OVERRIDES='{"text_config":{"rope_parameters":{"mrope_interleaved":true,"mrope_section":[11,11,10],"rope_type":"yarn","rope_theta":10000000,"partial_rotary_factor":0.25,"factor":2.0,"original_max_position_embeddings":262144}}}'
 printf 'Pennyroyal profile: Flash-Next FR-Spec\n  runtime: %s\n  target: %s\n  token map: %s\n  cache root: %s\n  NIXL root: %s\n' \
