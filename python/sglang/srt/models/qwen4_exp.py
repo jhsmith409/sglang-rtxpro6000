@@ -2100,10 +2100,17 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         draft's ``fc`` weights are not symmetric across its input slots, and a
         re-sorted feature row would read another layer's values out of a slot.
 
-        This path is validated at TP1 with every captured layer on this rank: a
-        sharded or pipeline-split hyper-connection state would average a
-        different set of streams per rank, so those topologies stop here instead
-        of silently drafting from the wrong features.
+        Ordinary tensor parallelism needs no special case here: every rank
+        holds the completed layer's full-width hyper-connection state, because
+        the attention output is all-reduced before the hyper-connection combine
+        and the ordinary-TP MoE block reduces its output before returning. The
+        stream mean therefore reads the same values on every rank and the
+        capture adds no collective of its own. What the feature cannot survive
+        is a split pipeline -- only the last stage's hidden states reach the
+        draft -- so layers outside this rank's range stop below instead of
+        silently drafting from the wrong features. The published checkpoint was
+        validated at TP1; plain TP>1 follows from the argument above but is not
+        yet validated on more than one GPU.
         """
         if not self.pp_group.is_last_rank:
             return
@@ -2112,12 +2119,6 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
             raise ValueError(
                 "DFLASH requires explicit target_layer_ids for hyper-connection "
                 "capture; the draft config carried none."
-            )
-        tp_size = int(get_parallel().tp_size)
-        if tp_size != 1:
-            raise ValueError(
-                "Qwen4Exp DFlash2 capture is validated for a single tensor-parallel "
-                f"rank only, got tp_size={tp_size}."
             )
         if len(set(ids)) != len(ids):
             raise ValueError(

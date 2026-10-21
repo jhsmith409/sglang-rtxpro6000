@@ -264,13 +264,84 @@ def test_capture_keeps_the_shared_ple_batch_commit(monkeypatch):
     assert commits == [None]
 
 
-def test_capture_rejects_a_topology_it_was_not_validated_on(monkeypatch):
-    """The stream mean is validated at TP1 only: sharded or replicated HC streams
-    would average different values per rank, so boot must stop, not drift."""
-    monkeypatch.setattr(f"{QWEN4_EXP}.get_parallel", lambda: SimpleNamespace(tp_size=2))
+def _captured_features(tp_size: int, monkeypatch) -> list[torch.Tensor]:
+    """Run the real capture on a backbone whose completed-layer states are the
+    full packed HC state -- the state ordinary TP leaves on every rank after the
+    attention all-reduce and the MoE output reduce -- and hand back the captured
+    features in slot order."""
+    monkeypatch.setattr(
+        f"{QWEN4_EXP}.get_parallel", lambda: SimpleNamespace(tp_size=tp_size)
+    )
     top = _top_level(_backbone())
-    with pytest.raises(ValueError, match="tp_size=2"):
-        Qwen4ExpForConditionalGeneration.set_dflash_layers_to_capture(top, LAYER_IDS)
+    Qwen4ExpForConditionalGeneration.set_dflash_layers_to_capture(top, LAYER_IDS)
+    _, aux = _forward(top.model)
+    assert top.model.last_hc_hidden_states is None
+    return aux
+
+
+@pytest.mark.parametrize("tp_size", [1, 2, 4])
+def test_capture_accepts_ordinary_tensor_parallelism_at_any_rank_count(
+    monkeypatch, tp_size
+):
+    """No rank-count cap: at any ordinary TP size the completed hyper-connection
+    state is full width on every rank, so the capture contract -- one feature per
+    configured layer, in configured order, ``hidden_size`` wide -- must not depend
+    on the rank count. TP2 is the authorized expectation; 4 shows nothing about
+    the count itself is special. CPU contract coverage of replicated complete
+    features, not a multi-GPU runtime test."""
+    aux = _captured_features(tp_size, monkeypatch)
+    assert len(aux) == len(LAYER_IDS)
+    for slot, (layer_id, feature) in enumerate(zip(LAYER_IDS, aux)):
+        assert feature.shape == (ROWS, HIDDEN), f"slot {slot}"
+        torch.testing.assert_close(feature, _expected_feature(layer_id))
+
+
+def test_tp2_capture_packs_and_projects_exactly_like_tp1(monkeypatch):
+    """The point of accepting plain TP2: the per-rank feature row -- downstream
+    packing order and the trained ``fc`` projection included -- is identical to
+    TP1's, with no extra gather or collective in between. The fixtures carry the
+    complete packed state on the rank, as ordinary TP leaves it; a two-GPU runtime
+    check is still owed."""
+    tp1 = _captured_features(1, monkeypatch)
+    tp2 = _captured_features(2, monkeypatch)
+    assert len(tp2) == len(tp1) == len(LAYER_IDS)
+    for slot, feature in enumerate(tp2):
+        assert feature.shape == (ROWS, HIDDEN), f"slot {slot}"
+        torch.testing.assert_close(feature, tp1[slot], rtol=0, atol=0)
+    draft = _draft(LAYER_IDS)
+    torch.testing.assert_close(
+        _projected(draft, tp2), _projected(draft, tp1), rtol=0, atol=0
+    )
+    # The asymmetric fixture ``fc`` really can tell feature orders apart, so the
+    # TP1/TP2 equality above is not a vacuous pass on identical slots.
+    assert not torch.allclose(
+        _projected(draft, list(reversed(tp2))),
+        _projected(draft, tp2),
+        rtol=0,
+        atol=0,
+    )
+
+
+def test_tp2_capture_still_refuses_a_packed_state_of_the_wrong_width(monkeypatch):
+    """The ban was replaced by the check that matters: a completed layer whose
+    state is not ``hc_count * hidden_size`` wide is an unsupported layout at TP2
+    exactly as at TP1, and averaging a wrong number of streams must fail loudly."""
+    monkeypatch.setattr(f"{QWEN4_EXP}.get_parallel", lambda: SimpleNamespace(tp_size=2))
+
+    class _Truncated(_FixtureLayer):
+        """Malformed layout: the completed state is one column short of
+        ``hc_count * hidden_size``, so no per-stream split is well-defined."""
+
+        def __call__(self, **kwargs):
+            state, extra = super().__call__(**kwargs)
+            return state[..., 1:], extra
+
+    backbone = _backbone()
+    backbone.layers[LAYER_IDS[0]] = _Truncated(LAYER_IDS[0])
+    top = _top_level(backbone)
+    Qwen4ExpForConditionalGeneration.set_dflash_layers_to_capture(top, LAYER_IDS)
+    with pytest.raises(AssertionError, match="packed hyper-connection width mismatch"):
+        _forward(top.model)
 
 
 @pytest.mark.parametrize(
