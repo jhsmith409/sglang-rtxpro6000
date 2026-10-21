@@ -76,6 +76,44 @@ def dflash_fixed_width_routing(cfg_path: str | None = None) -> dict[int, int]:
     return routing
 
 
+def _dflash_prefill_graph_reason(server_args) -> str | None:
+    """Refuse DFLASH width routing under a full prefill CUDA graph.
+
+    A width switch repoints ``model_runner.attn_backend`` between two backends
+    built for the two widths, and prefill replays on whichever one is live. A
+    tc_piecewise / breakable / disabled prefill graph is a per-shape runner that
+    re-enters the current backend, so it follows the switch. A FULL prefill graph
+    instead replays a captured graph that walks the backend through its own
+    ``full_cg_prefill_metadata``, and only the backend the capture ran against
+    ever populated it -- replaying the launch width's prefill graph through the
+    other width's backend asserts on that missing metadata. Supporting that
+    would mean a prefill graph per width; refusing it here costs the
+    (opt-in, experimental) full-prefill combination and leaves every other
+    DFLASH launch on the routing policy.
+    """
+    from sglang.srt.arg_groups.overrides import resolved_view
+    from sglang.srt.model_executor.cuda_graph_config import Backend, Phase
+
+    graph_config = getattr(resolved_view(server_args), "cuda_graph_config", None)
+    if graph_config is None:
+        return None
+    if isinstance(graph_config, dict):
+        prefill = graph_config.get(Phase.PREFILL) or {}
+        backend = prefill.get("backend") if isinstance(prefill, dict) else None
+    else:
+        backend = getattr(graph_config[Phase.PREFILL], "backend", None)
+    if backend == Backend.FULL:
+        return (
+            "speculative_algorithm=DFLASH with cuda_graph_config[prefill].backend='full': "
+            "width routing swaps the target attention backend, but the FULL prefill graph "
+            "was captured against the launch width's backend and replays through the new "
+            "one with no prefill metadata. Run with prefill backend "
+            "'tc_piecewise' / 'breakable' / 'disabled' (the default), or without "
+            "--speculative-adaptive for a single fixed width."
+        )
+    return None
+
+
 def adaptive_unsupported_reason(server_args: ServerArgs) -> str | None:
     """Return why adaptive spec cannot run under the given server args, or None if supported."""
     from sglang.srt.arg_groups.overrides import resolving_view
@@ -89,6 +127,9 @@ def adaptive_unsupported_reason(server_args: ServerArgs) -> str | None:
             dflash_fixed_width_routing(cfg.speculative_adaptive_config)
         except Exception as exc:
             return f"speculative_algorithm=DFLASH: {exc}"
+        reason = _dflash_prefill_graph_reason(server_args)
+        if reason is not None:
+            return reason
     elif cfg.speculative_algorithm not in ("EAGLE", "EAGLE3"):
         return (
             f"speculative_algorithm={cfg.speculative_algorithm} "

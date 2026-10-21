@@ -53,8 +53,7 @@ from sglang.srt.model_executor.cuda_graph_config import Backend, CudaGraphConfig
 from sglang.srt.model_executor.forward_batch_info import ForwardMode
 from sglang.srt.runtime_context import get_context, get_exec, get_spec
 from sglang.srt.server_args import ServerArgs
-from sglang.srt.speculative import adaptive_spec_params
-from sglang.srt.speculative import dflash_info_v2
+from sglang.srt.speculative import adaptive_spec_params, dflash_info_v2
 from sglang.srt.speculative import dflash_worker_v2 as dflash_module
 from sglang.srt.speculative.adaptive_runtime_state import AdaptiveController
 from sglang.srt.speculative.dflash_info import DFlashVerifyInput
@@ -225,6 +224,41 @@ class TestCapabilityGuard(CustomTestCase):
         reason = _guard_reason(speculative_eagle_topk=2)
         self.assertIsNotNone(reason)
         self.assertIn("topk", reason)
+
+    def test_dflash_routing_is_refused_under_a_full_prefill_graph(self):
+        # A width switch repoints the target attention backend, and a FULL
+        # prefill graph replays through whichever backend is live with the
+        # metadata only its own capture filled in. The other prefill backends
+        # re-enter the current backend, so they keep the routing.
+        for backend, supported in (
+            (Backend.FULL, False),
+            (Backend.BREAKABLE, True),
+            (Backend.TC_PIECEWISE, True),
+            (Backend.DISABLED, True),
+        ):
+            with self.subTest(backend=backend):
+                graph_config = _published_config()
+                graph_config.prefill.backend = backend
+                reason = _guard_reason(cuda_graph_config=graph_config)
+                if supported:
+                    self.assertIsNone(reason)
+                else:
+                    self.assertIsNotNone(reason)
+                    self.assertIn("full", reason)
+                    self.assertIn("DFLASH", reason)
+
+    def test_the_full_prefill_graph_refusal_is_dflash_only(self):
+        # A limitation of THIS width-routing integration, not a new global rule:
+        # EAGLE/EAGLE3 adaptive keep whatever they did with a full prefill graph.
+        graph_config = _published_config()
+        graph_config.prefill.backend = Backend.FULL
+        for algo in ("EAGLE", "EAGLE3"):
+            with self.subTest(algo=algo):
+                self.assertIsNone(
+                    _guard_reason(
+                        speculative_algorithm=algo, cuda_graph_config=graph_config
+                    )
+                )
 
     def test_eagle_and_other_algorithms_keep_their_existing_answers(self):
         self.assertIsNone(
@@ -410,12 +444,14 @@ def _runner_stub(role, pool, events):
     def init_cuda_graphs(capture_decode_cuda_graph=True):
         # Mirrors ModelRunner.capture_cuda_graphs: everything but the decode
         # boundary reads the published config, and the captured runner becomes
-        # the live one.
+        # the live one -- with the decode phase off there is no runner at all.
         with cgc.adaptive_launch_capture_scope():
             events.append(f"{role}-provisioning")
             if capture_decode_cuda_graph:
                 captured = dflash_module.capture_decode_graph(model_runner=runner)
                 runner.decode_cuda_graph_runner = captured.runner
+            else:
+                runner.decode_cuda_graph_runner = None
 
     def forward(fb):
         # Records the forward batch this width's draft ran with, then hands back
@@ -470,7 +506,9 @@ class _Worker(DFlashWorkerV2):
     points at width ownership rather than at a missing device.
     """
 
-    def __init__(self, launch_width, config_path, captures, target_graphs):
+    def __init__(
+        self, launch_width, config_path, captures, target_graphs, real_sampler=False
+    ):
         self.device = "cpu"
         self.gpu_id = 0
         self.ps = SimpleNamespace(tp_rank=0)
@@ -487,6 +525,9 @@ class _Worker(DFlashWorkerV2):
         self._draft_worker = self.draft_model_runner
         self.draft_model = _DraftModel(launch_width)
         self.selector = None
+        # False keeps the fixture's sampler stand-in; True runs the worker's REAL
+        # sampler builder, which is where an unreachable width used to blow up.
+        self._use_real_sampler = bool(real_sampler)
         self._warned_sampling_fallback = False
         self._draft_probs_buf = None
         self._logged_first_verify = False
@@ -523,6 +564,8 @@ class _Worker(DFlashWorkerV2):
             self.adaptive_controller = AdaptiveController(self, config_path=config_path)
 
     def _maybe_build_draft_sampler(self):
+        if self._use_real_sampler:
+            return DFlashWorkerV2._maybe_build_draft_sampler(self)
         return _FakeSampler(self.block_size)
 
     def _greedy_sample_from_vocab_parallel_head(self, *, hidden_states, lm_head):
@@ -627,13 +670,48 @@ class _WidthCase(CustomTestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _launched(self, launch_width=WIDE, decode_graphs=True):
-        worker = _Worker(launch_width, DFLASH2_POLICY, self.captures, [])
-        if not decode_graphs:
+    def _patch(self, target, name, value):
+        patcher = patch.object(target, name, value)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return patcher
+
+    def _launched(
+        self,
+        launch_width=WIDE,
+        decode_graphs=True,
+        buckets=None,
+        max_running_requests=MAX_RUNNING_REQUESTS,
+        low_memory=False,
+        real_sampler=False,
+    ):
+        if low_memory:
+            # The <1 GB fallback: a CUDA device that is out of memory, so the
+            # worker skips the launch capture itself.
+            self._patch(dflash_module, "is_cuda", lambda: True)
+            self._patch(dflash_module, "get_available_gpu_memory", lambda *a, **k: 0.5)
+        worker = _Worker(
+            launch_width, DFLASH2_POLICY, self.captures, [], real_sampler=real_sampler
+        )
+        if (
+            buckets is not None
+            or max_running_requests != MAX_RUNNING_REQUESTS
+            or not decode_graphs
+        ):
             get_context().override(
-                "test.disable_decode_graph",
-                cuda_graph_config=_published_config(backend=Backend.DISABLED, bs=None),
+                "test.capture_scope",
+                cuda_graph_config=_published_config(
+                    backend=Backend.FULL if decode_graphs else Backend.DISABLED,
+                    bs=buckets,
+                    max_bs=max_running_requests,
+                ),
+                max_running_requests=max_running_requests,
             )
+        if not decode_graphs:
+            # With the decode phase off, the target worker captured no verify
+            # graph either -- the slot is empty, which is what the routed states
+            # are held against.
+            worker.model_runner.init_cuda_graphs(capture_decode_cuda_graph=False)
         worker.prepare_adaptive_launch_capture()
         worker.init_cuda_graphs()
         cgc.clear_adaptive_launch_capture_scope()
@@ -841,21 +919,118 @@ class TestPreparedWidthStates(_WidthCase):
 
     def test_a_routed_state_with_no_captured_graph_still_switches(self):
         # Decode graphs off: the widths still differ in model metadata and
-        # scratch, and nothing is captured for any of them.
+        # scratch, and nothing at all is captured or folded for any of them.
         worker = self._launched(decode_graphs=False)
         self.assertEqual(self.captures, [])
         controller = worker.adaptive_controller
         self.assertEqual(sorted(controller._states), [NARROW_STEPS, WIDE_STEPS])
+        for steps, width in ((NARROW_STEPS, NARROW), (WIDE_STEPS, WIDE)):
+            state = controller._states[steps]
+            self.assertIsNone(state.width_state.draft_sampler, width)
+            self.assertIsNone(state.cuda_graph_runner, width)
+            self.assertIsNone(state.target_graph_runner, width)
         controller.activate_step_by_batch(4)
         self.assertEqual(worker.block_size, NARROW)
         self.assertIsNone(worker.draft_model_runner.decode_cuda_graph_runner)
         self.assertIsNone(worker._target_worker.model_runner.decode_cuda_graph_runner)
+        self.assertIsNone(worker._draft_sampler, "a capture-only sampler was built")
         controller.activate_step_by_batch(1)
         self.assertEqual(worker.block_size, WIDE)
-        self.assertIsNotNone(worker.draft_model_runner.decode_cuda_graph_runner)
+        self.assertIsNone(worker.draft_model_runner.decode_cuda_graph_runner)
 
 
 # ------------------------------------------------- the decode forward path ----#
+
+
+# ------------------------------ widths that reach no bucket / capture nothing ----#
+
+
+class TestUnreachableAndUncapturedWidths(_WidthCase):
+    """Startup must survive a routed width that captures nothing.
+
+    Two ways a width ends up with no graphs, both from decisions the launch
+    already made: its tier reaches no decode bucket, or the launch capture was
+    skipped (decode graphs off, or the <1 GB low-memory fallback). Neither may
+    turn into a capture anyway -- the capture-only folded sampler is sized off
+    ``decode.bs``, so building one for an empty bucket list is a startup crash --
+    and both run through the REAL sampler builder and the REAL controller
+    pruning, not the fixture's stand-in.
+    """
+
+    def _real_tp_group(self):
+        self._patch(
+            dflash_module, "get_tp_group", lambda: SimpleNamespace(world_size=1)
+        )
+
+    def test_a_width_that_reaches_no_bucket_starts_without_a_sampler(self):
+        # Shipped policy, canonical buckets [1] (max-running-requests=1): the
+        # real controller prunes block4 to no bucket at all.
+        self._real_tp_group()
+        worker = self._launched(buckets=[1], max_running_requests=1, real_sampler=True)
+        params = worker.adaptive_controller.params
+        self.assertEqual(params.cuda_graph_bs_for_step(WIDE_STEPS), [1])
+        self.assertEqual(params.cuda_graph_bs_for_step(NARROW_STEPS), [])
+
+        # The real builder ran: block6 got a real folded sampler sized for the
+        # one bucket it can reach, and block4 got none rather than max([]).
+        wide = worker._dflash_widths[WIDE]
+        narrow = worker._dflash_widths[NARROW]
+        self.assertIsInstance(wide.draft_sampler, dflash_module._DflashDraftSampler)
+        self.assertEqual(wide.draft_sampler.block_size, WIDE)
+        self.assertEqual(wide.draft_sampler.out.numel(), 1 * (WIDE - 1))
+        self.assertIsNone(narrow.draft_sampler, "a capture-only sampler was built")
+        self.assertIsNone(
+            worker.adaptive_controller._states[NARROW_STEPS].cuda_graph_runner
+        )
+        self.assertIsNone(
+            worker.adaptive_controller._states[NARROW_STEPS].target_graph_runner
+        )
+        self.assertEqual([c["width"] for c in self.captures], [WIDE])
+        self.assertEqual(self.captures[0]["bs"], [1])
+
+    def test_a_c2_batch_on_a_c1_only_capture_list_still_routes_narrow(self):
+        # The same startup, driven at the forward boundary: no C2 graph exists,
+        # so the narrow round must run without one rather than stay wide.
+        self._real_tp_group()
+        worker = self._launched(buckets=[1], max_running_requests=4, real_sampler=True)
+        self.assertEqual({c["width"] for c in self.captures}, {WIDE})
+        for bs, width in ((1, WIDE), (3, NARROW), (1, WIDE)):
+            result = self._run(worker, bs)
+            self.assertEqual(result.speculative_num_draft_tokens, width)
+            self.assertEqual(
+                worker.draft_model_runner.decode_cuda_graph_runner is None,
+                width == NARROW,
+            )
+
+    def test_the_low_memory_no_capture_decision_holds_for_every_width(self):
+        # <1 GB free after target backend init: the worker skips the launch
+        # capture. init_states must not hand the other width "no pruning" (which
+        # is what an empty list degrades to inside the params) and capture both
+        # widths' graphs anyway.
+        worker = self._launched(low_memory=True)
+        self.assertEqual(self.captures, [], "a width captured after the fallback")
+        self.assertIsNone(worker._draft_sampler)
+        controller = worker.adaptive_controller
+        extra = controller._states[NARROW_STEPS]
+        self.assertIsNone(extra.cuda_graph_runner)
+        self.assertIsNone(extra.target_graph_runner)
+        self.assertIsNone(extra.width_state.draft_sampler)
+        # Switching is still just a pointer swap, and between two eager widths at
+        # that: neither the draft nor (in the extra state) the target graph runner
+        # exists. The launch state keeps the fixture's pre-seeded target runner
+        # because the target worker's own capture decision lives in
+        # TpModelWorker.init_cuda_graphs, which this fixture does not simulate.
+        controller.activate_step_by_batch(4)
+        self.assertEqual(worker.block_size, NARROW)
+        self.assertIsNone(worker.draft_model_runner.decode_cuda_graph_runner)
+        self.assertIsNone(worker._target_worker.model_runner.decode_cuda_graph_runner)
+        self.assertIsNone(worker._draft_sampler)
+        controller.activate_step_by_batch(1)
+        self.assertEqual(worker.block_size, WIDE)
+        self.assertIsNone(worker.draft_model_runner.decode_cuda_graph_runner)
+        self.assertIsNotNone(
+            worker._target_worker.model_runner.decode_cuda_graph_runner
+        )
 
 
 class TestDecodeBoundary(_WidthCase):
@@ -1154,6 +1329,43 @@ class TestArgResolution(CustomTestCase):
         self.assertEqual(
             resolution_result(args, "speculative_num_draft_tokens"), NARROW
         )
+
+    def test_the_full_prefill_graph_launch_keeps_one_fixed_width(self):
+        # Through the real resolution pipeline: a DFLASH launch asking for the
+        # routing policy plus a full prefill graph loses adaptive and keeps its
+        # explicitly requested width, rather than capturing a prefill graph that
+        # would assert on replay after the first width switch.
+        args = _make_dflash_args(
+            speculative_adaptive=True,
+            speculative_adaptive_config=DFLASH2_POLICY,
+            speculative_num_steps=None,
+            speculative_num_draft_tokens=WIDE,
+            cuda_graph_config={"prefill": {"backend": "full"}},
+        )
+        with self.assertLogs(
+            "sglang.srt.arg_groups.speculative_hook", "WARNING"
+        ) as logs:
+            handle_speculative_decoding(args)
+        self.assertFalse(resolution_result(args, "speculative_adaptive"))
+        self.assertEqual(resolution_result(args, "speculative_num_steps"), 1)
+        self.assertEqual(resolution_result(args, "speculative_num_draft_tokens"), WIDE)
+        self.assertTrue(
+            any("prefill" in m and "full" in m for m in logs.output),
+            "the refusal must name the conflicting prefill graph setting",
+        )
+
+    def test_a_breakable_prefill_graph_launch_keeps_the_routing(self):
+        # The shipped default prefill backend stays supported by the routing.
+        args = _make_dflash_args(
+            speculative_adaptive=True,
+            speculative_adaptive_config=DFLASH2_POLICY,
+            speculative_num_steps=None,
+            speculative_num_draft_tokens=None,
+            cuda_graph_config={"prefill": {"backend": "breakable"}},
+        )
+        handle_speculative_decoding(args)
+        self.assertTrue(resolution_result(args, "speculative_adaptive"))
+        self.assertEqual(resolution_result(args, "speculative_num_steps"), WIDE_STEPS)
 
     def test_the_fixed_no_policy_launch_is_unchanged(self):
         args = self._args(speculative_num_steps=3, speculative_num_draft_tokens=NARROW)

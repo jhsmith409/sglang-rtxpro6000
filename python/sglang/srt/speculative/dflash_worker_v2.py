@@ -500,6 +500,9 @@ class DFlashWorkerV2(BaseSpecWorker):
         # (the rest are built in init_cuda_graphs). The live attributes below are
         # the active width's, repointed together by _apply_width_state.
         self.adaptive_controller: Optional[AdaptiveController] = None
+        # Set by init_cuda_graphs when the launch capture was skipped (decode
+        # graphs disabled or the low-memory fallback); routed widths inherit it.
+        self._routed_capture_off: bool = False
         self._dflash_widths: dict[int, DFlashWidthState] = {}
         self._active_width: Optional[DFlashWidthState] = None
         self._selector_sample: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
@@ -723,6 +726,9 @@ class DFlashWorkerV2(BaseSpecWorker):
                 routed.ensure_scratch(cap, self.device)
                 routed.ensure_bonus(cap, self.device)
             self._apply_width_state(launch_width)
+        # Nothing captured for the launch width means nothing for the routed
+        # widths either; the builder inherits this (see _width_capture_scope).
+        self._routed_capture_off = not capture_decode_cuda_graph
         self._draft_worker.init_cuda_graphs(
             capture_decode_cuda_graph=capture_decode_cuda_graph
         )
@@ -744,16 +750,12 @@ class DFlashWorkerV2(BaseSpecWorker):
             )
         )
         # The other widths capture only the buckets their own policy can reach
-        # (init_states prunes with the full canonical list kept by
-        # plan_launch_capture). Where the launch capture itself was skipped --
-        # decode graphs disabled, or the low-memory fallback -- nothing is
-        # captured for them either: an empty bucket list is the scoped
-        # backend=disabled answer their builders honour.
-        controller.init_states(
-            cuda_graph_bs=(
-                controller.launch_cuda_graph_bs if capture_decode_cuda_graph else []
-            )
-        )
+        # (init_states prunes against the FULL canonical list plan_launch_capture
+        # retained). Where the launch capture itself was skipped -- decode graphs
+        # disabled, or the low-memory fallback -- the builder forces an empty
+        # scope for every width (see _width_capture_scope), so no routed state
+        # captures graphs the launch just decided not to build.
+        controller.init_states(cuda_graph_bs=controller.launch_cuda_graph_bs)
 
     @staticmethod
     def _require_selector_for_token_map(selector) -> None:
@@ -2485,6 +2487,37 @@ class DFlashWorkerV2(BaseSpecWorker):
             return None
         return list(cfg.decode.bs) if cfg.decode.bs is not None else None
 
+    def _width_capture_scope(self, cuda_graph_bs: Optional[List[int]]) -> List[int]:
+        """The decode buckets to publish while building one routed width.
+
+        ``[]`` from ``cuda_graph_bs_for_step`` means this width's tier reaches no
+        bucket, and the no-capture decision made for the launch capture (decode
+        graphs disabled, or the <1 GB low-memory fallback) has to hold for the
+        extra widths too. Both must be carried explicitly: ``set_cuda_graph_bs``
+        maps ``[]`` onto ``None`` (its "graphs off" answer) and
+        ``cuda_graph_bs_for_step`` then returns ``None`` -- which
+        ``_override_worker_state`` would read as "no pruning" and leave the
+        published FULL decode phase enabled, so a width that was supposed to
+        capture nothing would capture both graphs anyway. An empty list here
+        becomes the scoped ``backend=disabled`` config the capture boundary
+        honours.
+        """
+        if self._routed_capture_off or not cuda_graph_bs:
+            return []
+        return list(cuda_graph_bs)
+
+    def _decode_capture_enabled(self) -> bool:
+        """Whether the capture boundary builds graphs under the live config.
+
+        Read after the width's scoped config is published, so this is the same
+        question the capture boundary asks. DFLASH is CUDA/NPU-only at launch
+        (`_handle_dflash` refuses other devices), so ``capture_decode_graph``'s
+        CPU carve-out is unreachable here and the published decode leaf alone
+        decides. The builder's other refusals (PD-prefill-only, non-generation
+        model, MindSpore) are process-wide and cannot differ between widths.
+        """
+        return not check_cuda_graph_backend(Phase.DECODE, Backend.DISABLED)
+
     def prepare_adaptive_launch_capture(self) -> None:
         """Scope the launch width's start-up capture to its reachable buckets.
 
@@ -2624,6 +2657,13 @@ class DFlashWorkerV2(BaseSpecWorker):
         draft sampler folded in) and the target's. DFLASH materializes draft KV
         from target hidden states instead of running a draft-extend stage, so
         those fields stay ``None``.
+
+        *cuda_graph_bs* is the buckets this width's tier can reach: ``[]`` when
+        it can reach none (the shipped policy with a BS1-only capture list gives
+        block4 no bucket at all). A width that captures nothing is still a valid
+        state -- it runs eager -- but nothing is built for it: the capture-only
+        folded sampler is sized off ``decode.bs``, so ``max([])`` would turn a
+        never-routed width into a startup crash.
         """
         tic = time.perf_counter()
         before_mem = get_available_gpu_memory(self.device, self.gpu_id)
@@ -2631,8 +2671,9 @@ class DFlashWorkerV2(BaseSpecWorker):
         with self._override_worker_state(
             speculative_num_steps,
             speculative_num_draft_tokens,
-            cuda_graph_bs=cuda_graph_bs,
+            cuda_graph_bs=self._width_capture_scope(cuda_graph_bs),
         ), self._private_capture_scope():
+            captures = self._decode_capture_enabled()
             draft_runner = self.draft_model_runner
             width = self._active_width
             draft_attn_backend = draft_runner._get_attention_backend(
@@ -2642,7 +2683,10 @@ class DFlashWorkerV2(BaseSpecWorker):
 
             # A sampler per width: its static output buffers are written by the
             # nodes captured in this graph, and their widths describe this block.
-            width.draft_sampler = self._maybe_build_draft_sampler()
+            # Only worth building when this width's graphs will exist to run it.
+            width.draft_sampler = (
+                self._maybe_build_draft_sampler() if captures else None
+            )
             backup_hooks = list(draft_runner.capture_tail_hooks)
             draft_runner.capture_tail_hooks[:] = (
                 [make_draft_sampler_capture_hook(width.draft_sampler)]
@@ -2651,7 +2695,7 @@ class DFlashWorkerV2(BaseSpecWorker):
             )
             draft_graph_runner = None
             try:
-                if not check_cuda_graph_backend(Phase.DECODE, Backend.DISABLED):
+                if captures:
                     draft_capture = capture_decode_graph(model_runner=draft_runner)
                     draft_graph_runner = draft_capture.runner
                     self._additional_graph_memory_usage["draft_verify"] = (
@@ -2676,7 +2720,7 @@ class DFlashWorkerV2(BaseSpecWorker):
                 target_model_runner.init_new_workspace = backup_init
 
             target_graph_runner = None
-            if not check_cuda_graph_backend(Phase.DECODE, Backend.DISABLED):
+            if captures:
                 TargetGraphRunnerCls = (
                     NPUGraphRunner if _is_npu else DecodeCudaGraphRunner
                 )
