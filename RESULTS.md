@@ -14,57 +14,103 @@ The older H3PO raw table remains at its existing link.
 
 ## Penny Royal 3.1
 
-Recorded October 2026 on one RTX PRO 6000 Blackwell (TP1). The maintained
-default Flash-Next profile stays native NEXTN MTP with FR-Spec; the DFlash2
-configurations below record the optional profile: our OrcaRouter ModelOpt NVFP4 checkpoint with the
-separate `incoai/Qwen3.8-Flash-Next-DFlash2` draft, FR-Spec on the bundled
+Status: release preparation and final artifact pending. Recorded October 2026
+on one RTX PRO 6000 Blackwell (TP1). The maintained default Flash-Next profile
+stays native NEXTN MTP with FR-Spec (.97 static memory fraction; 4 requests /
+24 Mamba slots unless overridden; `next-plain` is the same without the FR-Spec
+map at .981), with the verify width fixed by active concurrency - block 8 for
+one running request, block 4 for two or more - from
+`configs/pennyroyal/adaptive-next.json`, whose SHA-256 `3edaa87d66f535caae0bddb8f457f03fce0f6dc1f4e8091b20495a0dc9da41fb` is pinned
+by the launch recipes. The DFlash2 configurations below record the optional
+profile: our OrcaRouter ModelOpt NVFP4 checkpoint with the separate
+`incoai/Qwen3.8-Flash-Next-DFlash2` draft, FR-Spec on the bundled
 65,536-ID map, width routed by active batch size (block 6 for one request,
-block 4 for two or more), 524,288-token context, 6 requests / 36 Mamba slots,
-`.95` static memory fraction, automatic KV pool sizing, RAM PLE, 32 decimal
-GB HiCache, and NIXL. The 27B profile keeps its FP8 target, its own DFlash2
-draft at fixed block 8, 4 requests / 24 slots, `.92`, and 96 decimal GB
-HiCache. TP2 is expected to work; it has not been tested on two-GPU hardware.
-Local numbers here are one inference card.
+block 4 for two or more), accepted draft tokens verified with FlashInfer's
+SM120 kernels (`--linear-attn-verify-backend flashinfer`), 524,288-token
+context, 6 requests / 36 Mamba slots, `.95` static memory fraction, automatic
+KV pool sizing, RAM PLE, 32 decimal GB HiCache, and NIXL. The 27B profile
+keeps its FP8 target, its own DFlash2 draft at fixed block 8, 4 requests /
+24 slots, `.92`, and 96 decimal GB HiCache. TP2 is part of the optional
+DFlash2 capability: it is expected to work; it has not been tested on
+two-GPU hardware. Local numbers here are one inference card. DFlash2 offers
+more token-pool capacity; we are still evaluating performance across
+concurrency levels.
 
-### Completed presentation workflow (agentic)
+### Presentation workflow (agentic), optional profile
 
-The real five-slide presentation ran end to end on the final candidate at
-runtime source `a60f4428f7aae4fd843cfb6f7cbda94d0aee7b82`, C1 with the routed
-block-6 width throughout:
+The original ten-slide presentation ran end to end on the final candidate at
+runtime source `a60f4428f7aae4fd843cfb6f7cbda94d0aee7b82`, on the optional
+DFlash2 profile with FlashInfer verification, C1 with the routed block-6 width
+throughout, at the explicit Medium reasoning effort:
 
 | Measurement | Result |
 |---|---:|
-| Native elapsed-weighted generation mean | **194.56 tok/s** |
-| Native sampled peak | **421.35 tok/s** |
-| Model turns / matched server requests | 121 / 121 |
-| Complete measured decode intervals | 1,676 over 909.385 seconds |
-| Server output tokens, including reasoning | 192,349 |
-| Prompt growth across the workflow | 42,637 to 253,267 tokens |
-| Total workflow time, including tools and rendering | 33 minutes 25 seconds |
+| Native elapsed-weighted generation mean | **217.19 tok/s** |
+| Native sampled peak | **448.70 tok/s** |
+| Model turns / matched server requests | 70 / 70 |
+| Complete measured decode intervals | 1,075 over 570.391832 seconds |
+| Server output tokens, including reasoning | 132,873 |
+| Prompt growth across the workflow | 42,527 to 206,219 tokens |
+| Total workflow time, including tools and rendering | 13 minutes 44 seconds |
 
 All turns matched the retained workflow timestamps one-to-one; no competing
 requests or width switches occurred. Native speed includes reasoning and
 excludes prefill, tool waits, idle, each request's first reporting interval,
-and unlogged final tails. Independent arithmetic verification matched. This
-was one natural xhigh workflow. The earlier recorded presentation averaged
-189.27 tok/s on a different configuration; these were not matched A/B runs.
+and unlogged final tails. The workflow completed the normal presentation
+tools, the deck rendered, and the previewed deck displayed correctly. The
+earlier recorded presentation averaged 189.27 tok/s on a different
+configuration; these were not matched A/B runs.
 
 ### Decode rates, by recorded configuration
 
 | Workload | Mean tok/s | Sampled peak tok/s | Source / configuration |
 |---|---:|---:|---|
-| Presentation workflow (agentic), C1 W6 | 194.56 | 421.35 | `a60f442`, DFlash2 + FR-Spec, routed W6 |
+| Native MTP normal, single request, C1 W8 | **227.54** | **375.90** | `a60f442`, maintained default FR-Spec recipe |
+| DFlash2 + FlashInfer normal, single request, C1 W6 | **241.49** | **339.53** | `a60f442`, optional profile, routed W6 |
+| DFlash2 + FlashInfer full six-request C6, aggregate | **504.80** | **568.90** | `a60f442`, fixed W4 concurrent tier |
+| Presentation workflow (agentic), C1 W6 | 194.56 | 421.35 | `a60f442`, DFlash2 + FR-Spec, Triton verify, routed W6 |
 | Coding flow, C1 W6 | 235.60 | 417.50 | `5ca3f39`, FR-Spec W6 |
-| Normal single request, C1 W6 (optional DFlash2 profile) | 228.44 | 336.20 | DFlash2 + FR-Spec, C1 W6 |
+| Normal single request, C1 W6 | 228.44 | 336.20 | DFlash2 + FR-Spec, Triton verify, C1 W6 |
 | Regular C1 W4 | 214.18 | 306.44 | `5ca3f39`, FR-Spec fixed W4 |
 | Full six-request C6, aggregate | 566.14 | 657.52 | `5ca3f39`, FR-Spec W4, 15 full-C6 intervals |
 
-All rows are 3.1-candidate sources; the W4 screens keep their W4 labels. The
-coding-flow row is the accepted W6 timing for that tool workflow; its final
-handoff record was not retained, so the task's completion fact is listed
-separately from the measurement above. The corrected full-C6 mean supersedes
-the earlier drain-inclusive 522.69 tok/s summary. The six-request figure is
-the aggregate over the whole running batch, not the rate of each request.
+All rows are 3.1-candidate sources; each keeps its recorded profile,
+verification path and width label. The FlashInfer screens repeat 128-token
+inputs with a 1,024-token output ceiling three times at seeds 42, 43 and 44,
+with normal non-greedy sampling (temperature 0.8, top-p 0.95, top-k 40,
+min-p 0.05, xhigh reasoning) so accepted-token counts are not a
+greedy-sampling artefact; their matched Triton controls from the same
+campaign are 227.37 / 346.82 at C1 W6 and 503.41 / 581.67 at full C6, shown
+as dated history below. Every screen uses the same eligible-window
+definition: a screen begins only once the first complete active-decode
+interval is visible in the live log and ends at its last one, because a
+window fixed at launch can silently capture zero intervals when the server
+logs little; C6 fill and drain periods are excluded, so the aggregate is not
+diluted. The FlashInfer C1 screen recorded 21 complete intervals totalling
+10.687586 s; the C6 screen recorded 17 intervals totalling 20.495504 s. The
+corrected full-C6 mean supersedes the earlier drain-inclusive 522.69 tok/s
+summary. The six-request figures are aggregate over the whole running batch,
+not the rate of each request; C1 rows are per-request and not directly
+comparable. The native-MTP row shows only C1: that screen ran the C=6
+profile, whose concurrent tier is W6, while the selected default routes C2+
+to W4, and no native full-C6/W4 screen exists yet, so no native full-batch
+figure is claimed here. A medium-effort coding rerun on the final source
+(259.38 / 439.28) did not complete, and its handoff does not accept it as a
+published coding benchmark, so it is not published as a current result; the
+accepted coding-flow row above predates the FlashInfer switch, and its final
+handoff record was not retained, so that task's completion fact is listed
+separately from the measurement.
+
+### Earlier 3.1 decode screens on the Triton path
+
+Before FlashInfer verification, the same optional profile and routing measured
+194.56 / 421.35 on the completed five-slide xhigh presentation (121 model
+turns matched one-to-one, 1,676 complete decode intervals over 909.385
+seconds, 192,349 output tokens including reasoning, prompt growth 42,637 to
+253,267 tokens, 33 minutes 25 seconds total, with independent arithmetic
+verification) and 228.44 / 336.20 on a normal single request. The five-slide and ten-slide runs differ in slide count and
+reasoning effort; neither is presented as a regression or an improvement of
+the other.
 
 ### Cold prefill
 
@@ -73,7 +119,10 @@ the aggregate over the whole running batch, not the rate of each request.
 | 63,906 tokens | 15,365.38 | 6,421.59 |
 | 489,921 tokens | 8,715.05 | 1,677.10 |
 
-Server initial-prefill timing on cold, uncached prompts.
+Server initial-prefill timing on cold, uncached prompts. The Flash-Next
+column was recorded on the DFlash2 profile during its qualification and
+remains accurate there; no native-MTP re-screen exists for this candidate.
+Prefill is not speculative.
 
 ### 27B DFlash2 rates
 
@@ -86,23 +135,41 @@ The corrected full-C4 mean supersedes the earlier drain-inclusive 386.26
 tok/s summary; a contaminated first C1 run remains excluded. The September 10
 and August 24 27B tables below stay as dated history.
 
-**Correctness and cache:** both profiles completed the recorded reasoning,
-tool, vision, long-context, and RAM/NIXL restore checks on the qualified
-sources. Current reasoning-suite scores are 93.46/100 (Flash-Next) and
-96.94/100 (27B), graded on actual answers; extended or repetitive reasoning
-is not penalized, and `ask_user` is treated as a valid tool choice. The
-recorded model and tool deviations stand. Flash-Next's final candidate boot
-resolved a 1,210,944-token shared KV pool with automatic sizing, and the
-accumulated `.95`-fraction evidence includes 49 successful image requests. The
-routing change passed 139 focused checks plus 24 subtests and two live
-C1→C2→C1→C6→C1 cycles with 122 correctly routed decode samples. The TP2
-capture support (PR89) passed 21 focused capture tests with pinned lint and an
-independent review.
+### Correctness and cache
+
+Both profiles completed the recorded reasoning, tool, vision, long-context,
+and RAM/NIXL restore checks on the qualified sources. Current reasoning-suite
+scores are 93.46/100 (Flash-Next, recorded on the DFlash2 qualification) and
+96.94/100 (27B), graded on actual
+answers; extended or repetitive reasoning is not penalized, and `ask_user`
+is treated as a valid tool choice. The recorded model and tool deviations
+stand. The optional DFlash2 candidate boot resolved the observed
+1,210,944-token shared target KV pool with automatic sizing; the maintained
+native-MTP profile reports its own resolved pool size at startup. The
+accumulated `.95`-fraction evidence includes 49 successful image requests.
+The fixed-width routing (PR100) passed three source reviews, 139 focused
+checks plus 24 subtests, pinned lint, and two live
+C1→C2→C1→C6→C1 cycles with eight switches and 122
+correctly routed CUDA-graph decode samples, followed by normal-answer and
+tool checks; that evidence was recorded on the DFlash2 profile at `a60f442`.
+The native-MTP configuration integration (PR102/PR103/PR104) was reviewed as
+one change and checked together: 231 CPU tests plus 69 subtests passed with
+2 environment skips, and pinned lint passed; this is configuration
+validation, not a new native hardware campaign. FlashInfer verification was
+checked by the four existing SM120 RecoverSSM checks at each of W4 and W6
+(accepted-prefix state output, the 63/64/65 boundary fixture, 24-cycle
+continuation/prefix replay, CUDA-graph recovery) and one focused W4/B6
+mixed-accept and graph-replay check, at .04 atol/rtol; live smoke passed C1
+memory, C6 arithmetic, post-concurrency continuation, a tool call and a tool
+result. The TP2 capture support (PR89) passed 21 focused capture
+tests with pinned lint and an independent review.
 
 [Machine-readable release record](release-3.1.json) includes the exact source
 identities, settings, and validation scope. Publication of the tag, image, and
-GitHub release is still pending. The 3.0 and earlier entries below remain
-dated history with their original labels and timing methods.
+GitHub release is still pending; the planned version is `v3.1.0` and the
+reused superseded image build (0077) is not the final artifact. The 3.0 and
+earlier entries below remain dated history with their original labels and
+timing methods.
 
 ## Penny Royal 3.0
 

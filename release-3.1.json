@@ -3,9 +3,9 @@
   "version": "3.1.0",
   "status": {
     "publication_approved": false,
-    "source_publication": "Accepted runtime and setup PRs merged; the release is reopened and its default and maintenance status are corrected; status is release preparation and final publication pending.",
+    "source_publication": "Accepted runtime and setup PRs merged; native NEXTN MTP restored as the maintained default (PR102), native fixed width policy (PR103) and optional FlashInfer verification (PR104) included; status is release preparation and final publication pending.",
     "container": "pending",
-    "note": "Release tag, versioned image and GitHub release await final approval and the candidate image check; no release promotion."
+    "note": "Release tag, versioned image and GitHub release await final approval and the candidate image check; the planned version is v3.1.0 and no tag exists yet. The reused superseded image build (0077) is not the final artifact."
   },
   "source": {
     "base_release": "pennyroyal-v3.0.2",
@@ -23,7 +23,9 @@
   "container": {
     "image": "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0",
     "digest": null,
-    "build_url": null
+    "build_url": null,
+    "state": "planned",
+    "note": "published_revision, digest and build_url are filled by the release owner only after the tag and the actual image build."
   },
   "changes": [
     {
@@ -40,6 +42,32 @@
       "summary": "Verify width is fixed by active concurrency through the bundled fixed policy: block 6 at one running request, block 4 at two or more; one candidate per tier keeps the width stable between boots. Proposal-probability scratch is keyed by width and routing stays valid when a width captures nothing. The 3.0-era SPECULATIVE_NUM_DRAFT_TOKENS setting is retired on this profile.",
       "profiles": [
         "Flash-Next DFlash2"
+      ]
+    },
+    {
+      "id": "native_fixed_width_routing",
+      "pr": 103,
+      "summary": "Native NEXTN MTP verify width is fixed by active concurrency through the bundled fixed policy configs/pennyroyal/adaptive-next.json (SHA-256 3edaa87d66f535caae0bddb8f457f03fce0f6dc1f4e8091b20495a0dc9da41fb, pinned by the recipes): block 8 at one running request, block 4 at two or more; one candidate per tier keeps the width stable between boots. The launch carries the widest routed block (steps 7, draft tokens 8); the acceptance EMA cannot trade widths.",
+      "profiles": [
+        "Flash-Next (native MTP)",
+        "Flash-Next non-FR"
+      ]
+    },
+    {
+      "id": "flashinfer_dflash2_verification",
+      "pr": 104,
+      "summary": "The optional Flash-Next DFlash2 profile now uses FlashInfer for target linear-attention verification (--linear-attn-verify-backend flashinfer); the native recipe and the container startup files select it automatically. On the final source, matched screens show single-request decode at block 6 rising from 227.37 to 241.49 tok/s mean (sampled peak 339.53) and the full six-request batch at block 4 from 503.41 to 504.80 aggregate (peak 568.90).",
+      "profiles": [
+        "Flash-Next DFlash2"
+      ]
+    },
+    {
+      "id": "configurator_next_dflash2",
+      "pr": 94,
+      "summary": "The beta configurator offers the next-dflash2 profile on the native and container paths, prompts for the draft checkpoint, and carries the fixed-width policy and FlashInfer verification from the samples. External container configuration files and the manual native recipes remain the primary setup paths.",
+      "profiles": [
+        "Flash-Next DFlash2",
+        "setup"
       ]
     },
     {
@@ -154,6 +182,15 @@
       "profiles": [
         "Swift-1.5 (optional recipe)"
       ]
+    },
+    {
+      "id": "restore_native_default",
+      "pr": 102,
+      "summary": "Restore the maintained native NEXTN MTP Flash-Next profile as the default for new setups across the recipes, the container startup defaults and the configurator; next-dflash2 remains fully available as an opt-in and explicit saved selections are preserved.",
+      "profiles": [
+        "Flash-Next",
+        "Flash-Next non-FR"
+      ]
     }
   ],
   "settings": {
@@ -180,46 +217,46 @@
     "new_draft_download": "incoai/Qwen3.8-Flash-Next-DFlash2 for the Flash-Next DFlash2 profile",
     "precision_changed": false,
     "dependencies_changed": false,
-    "diagnostics_enabled": false
+    "diagnostics_enabled": false,
+    "next_width_routing": "block 8 at one running request; block 4 at two or more (configs/pennyroyal/adaptive-next.json, SHA-256 pinned by the recipes)",
+    "flash_next_dflash2_verify_backend": "FlashInfer SM120 kernel (--linear-attn-verify-backend flashinfer; fixed in the recipe, no new public toggle)"
   },
   "validation": {
     "policy": "Reuse of completed qualification; the dated scopes below were recorded on the qualified sources.",
     "reviewed_runtime_source": "a60f4428f7aae4fd843cfb6f7cbda94d0aee7b82 (TP1, RTX PRO 6000)",
     "tp2_capture_correction_review": "PR89 at f0e46ecc49: four new capture cases failed on the TP ban at base c1e66cd850 and pass with the correction; 21 focused capture tests pass; pinned local lint, GitHub lint and an independent review pass.",
-    "routing_gate": "Three source reviews, 139 focused checks plus 24 subtests, pinned lint, two C1->C2->C1->C6->C1 live cycles with eight switches and 122 correctly routed CUDA-graph decode samples, followed by normal-answer/tool checks.",
+    "routing_gate": "Recorded on the original DFlash2 fixed-width routing (PR100) at a60f442: three source reviews, 139 focused checks plus 24 subtests, pinned lint, two C1->C2->C1->C6->C1 live cycles with eight switches and 122 correctly routed CUDA-graph decode samples, followed by normal-answer/tool checks.",
     "shared_fix_gates": "27B invocation bd881ef9f57d4a31b01ef60d33d6fcaa (2026-10-20 23:23-23:24 EDT) passed the PR96 regex cases and PR97 mixed-probability stream; follow-up generation and health passed with no new runtime or GPU failures.",
     "both_profiles": {
       "reasoning_tools_vision_long_context_ram_nixl_restore": "completed recorded checks on the qualified sources",
       "reasoning_scores": {
-        "flash_next": "93.46/100",
+        "flash_next": "93.46/100 (recorded on the DFlash2 qualification)",
         "27b": "96.94/100"
       },
       "grading": "Actual answer grading; extended or repetitive reasoning is not penalized; ask_user is a valid tool choice."
     },
     "setup": "178 affected setup checks OK (two local skips); 66 focused pytest cases passed; final Docker CMD correction passed 22 container checks; integrated summary fixture passed eight checks. Three functional source reviews completed; final review clean. GitHub Contributor checks passed on 6407975420.",
-    "setup_ci_url": "https://github.com/jpezzulli/sglang-rtxpro6000/actions/runs/39607992358"
+    "setup_ci_url": "https://github.com/jpezzulli/sglang-rtxpro6000/actions/runs/39607992358",
+    "flashinfer_verification": "Four existing SM120 RecoverSSM checks at each of W4 and W6 (accepted-prefix state output, 63/64/65 boundary fixture, 24-cycle continuation/prefix replay, CUDA-graph recovery); one focused W4/B6 mixed-accept and graph-replay check; checked at .04 atol/rtol. Live smoke passed C1 memory, C6 arithmetic, post-concurrency continuation, a tool call and a tool result.",
+    "native_config_integration": "PR102/PR103/PR104 configuration integration reviewed as one change: 231 CPU tests plus 69 subtests passed, 2 environment skips, pinned lint passed. Configuration validation, not a new native hardware campaign."
   },
   "performance": {
     "native_mean_and_sampled_peak_tok_s": {
-      "flash_next_presentation_agentic_c1w6_final": [
-        194.56,
-        421.35
+      "flash_next_native_mtp_normal_c1_w8": [
+        227.54,
+        375.9
       ],
-      "flash_next_coding_flow_c1w6": [
-        235.6,
-        417.5
+      "flash_next_dflash2_flashinfer_normal_c1_w6": [
+        241.49,
+        339.53
       ],
-      "flash_next_normal_c1_w6": [
-        228.44,
-        336.2
+      "flash_next_dflash2_flashinfer_full_c6_aggregate_w4": [
+        504.8,
+        568.9
       ],
-      "flash_next_normal_c1_w4": [
-        214.18,
-        306.44
-      ],
-      "flash_next_full_c6_aggregate_w4": [
-        566.14,
-        657.52
+      "flash_next_dflash2_flashinfer_presentation_agentic_c1w6_medium": [
+        217.19,
+        448.7
       ],
       "27b_normal_c1_w8": [
         133.06,
@@ -228,9 +265,40 @@
       "27b_full_c4_aggregate": [
         459.74,
         570.73
-      ]
+      ],
+      "triton_path_history": {
+        "flash_next_presentation_agentic_c1w6_final": [
+          194.56,
+          421.35
+        ],
+        "flash_next_coding_flow_c1w6": [
+          235.6,
+          417.5
+        ],
+        "flash_next_normal_c1_w6": [
+          228.44,
+          336.2
+        ],
+        "flash_next_normal_c1_w4": [
+          214.18,
+          306.44
+        ],
+        "flash_next_full_c6_aggregate_w4": [
+          566.14,
+          657.52
+        ],
+        "matched_controls_c1_w6": [
+          227.37,
+          346.82
+        ],
+        "matched_controls_full_c6": [
+          503.41,
+          581.67
+        ]
+      }
     },
     "cold_prefill_server_tok_s": {
+      "note": "Flash-Next columns recorded on the optional DFlash2 profile; no native-MTP re-screen on this candidate.",
       "prompt_63906": {
         "flash_next": 15365.38,
         "27b": 6421.59
@@ -240,10 +308,11 @@
         "27b": 1677.1
       }
     },
-    "presentation_detail": "Real agentic five-slide workflow on final source a60f442 at C1 W6: 121 model turns matched 121 server requests, 1,676 complete decode intervals over 909.385 s, 192,349 server output tokens including reasoning, prompt growth 42,637 to 253,267 tokens; total workflow time including tools and rendering was 33 minutes 25 seconds.",
-    "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak from the same window, including reasoning; normal non-greedy sampling. Rows keep their recorded source/configuration labels: 5ca3f39 for the FR-Spec fixed-W4 normal/full-C6 and W6 coding-flow screens, earlier 27f9eaa for the 27B fixed-W8 screens, and a60f442 for the presentation. The normal C1 W6 screen uses DFlash2 + FR-Spec. C4/C6 rows are aggregate over the full running batch, not per-request rates. The corrected full-batch means supersede the earlier drain-inclusive 522.69/386.26 summaries. The coding-flow timing was accepted explicitly; its final handoff record was not retained, so that task's completion fact is recorded separately from the measurement.",
-    "completion_facts": "The presentation workflow completed end to end on a60f442 with all 121 turns matched one-to-one; the coding-flow completion fact is recorded in the qualification notes, separate from its accepted timing.",
-    "hardware_note": "All local numbers are one RTX PRO 6000 at TP1; TP2 is expected to work and has not been tested on two-GPU hardware."
+    "presentation_detail": "Real agentic ten-slide workflow on final source a60f442 at C1 W6 with FlashInfer verification and explicit medium reasoning effort: 70 model turns matched 70 server requests, 1,075 complete decode intervals over 570.391832 s, 132,873 server output tokens including reasoning, prompt growth 42,527 to 206,219 tokens; the workflow completed on the normal presentation tools and the finished deck previewed; total workflow time including tools and rendering was 13 minutes 44 seconds. The earlier five-slide xhigh screen on the Triton verification path (194.56/421.35; 121 turns, 192,349 output tokens, 1,676 intervals over 909.385 s, prompt 42,637 to 253,267, 33 minutes 25 seconds total) is retained as dated history; the runs differ in slide count and effort setting.",
+    "coding_flow_note": "The medium-effort coding rerun on a60f442 (259.38/439.28) did not complete, and its handoff does not accept it as a new published coding benchmark. The accepted coding-flow timing (235.60/417.50, 5ca3f39, Triton path) remains dated history.",
+    "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak from the same window, including reasoning; normal non-greedy sampling (temperature 0.8, top-p 0.95, top-k 40, min-p 0.05), 128-token inputs, 1,024-token output ceiling, three repeats at seeds 42, 43 and 44; xhigh reasoning for the matched screens, explicit medium for the ten-slide presentation. Rows keep their recorded source/configuration labels: a60f442 for the native-MTP C1/W8, FlashInfer DFlash2 and presentation screens; 5ca3f39 for the dated fixed-W4 and coding-flow screens; 27f9eaa for the 27B fixed-W8 screens. C4/C6 rows are aggregate over the full running batch, not per-request rates. The native-MTP full-batch screen at the routed W4 width does not exist yet; only its C1/W8 rate is shown, so no native-versus-DFlash2 full-batch comparison is made. The corrected full-batch means supersede the earlier drain-inclusive 522.69/386.26 summaries.",
+    "completion_facts": "The ten-slide presentation completed end to end on a60f442 with all 70 turns matched one-to-one and the deck previewed; the earlier coding-flow completion fact is recorded in the qualification notes, separate from its accepted timing; the new medium coding rerun is unfinished and not accepted.",
+    "hardware_note": "All local numbers are one RTX PRO 6000 at TP1; TP2 on the optional DFlash2 profile is expected to work and has not been tested on two-GPU hardware."
   },
   "upgrade": {
     "matching_startup_files_required": true,
@@ -268,12 +337,12 @@
     {
       "name": "Penny Royal",
       "email": "Pennyroyal@agentmail.to",
-      "contribution": "Implementation, ports and integration; John, Penny and Codex worked through the architecture, tuning and debugging together, including the width-routing decision and the memory-fraction measurements"
+      "contribution": "Implementation, ports and integration; John, Penny and Codex worked through the architecture, tuning, verification-backend choice and debugging together, including the width-routing decision and the memory-fraction measurements"
     }
   ],
   "remaining": [
-    "public merge and immutable pennyroyal-v3.1.0 tag",
-    "container image build, digest and public-link verification",
+    "public merge and immutable pennyroyal-v3.1.0 tag (planned; no official tag exists yet)",
+    "container image build, digest and public-link verification (the reused superseded build 0077 is not the final artifact)",
     "John's approval of the final release notes and publication",
     "transition of the everyday service to the published stable checkout/environment/launcher with diagnostics OFF"
   ]

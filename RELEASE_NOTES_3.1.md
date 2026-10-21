@@ -1,10 +1,31 @@
 # Penny Royal 3.1
 
 Penny Royal 3.1 keeps native NEXTN MTP with FR-Spec as the maintained default
-for Qwen3.8 Flash-Next, adds Flash-Next DFlash2 with FR-Spec as an optional
-profile, and replaces the preset KV-token cap with automatic pool sizing. Qwen3.8-27B FP8 with DFlash2 remains the second
-supported profile. The target is RTX PRO 6000 Blackwell with one card (TP1) or
-two (TP2).
+for Qwen3.8 Flash-Next, with its verify width fixed by active concurrency
+(block 8 for one running request, block 4 for two or more). Flash-Next DFlash2
+with FR-Spec is fully available as an optional profile — same weights, same
+cache stack, its own draft model — now verifying accepted draft tokens with
+FlashInfer's SM120 kernel. The release also replaces the preset KV-token cap
+with automatic pool sizing. Qwen3.8-27B FP8 with DFlash2 remains the second
+supported profile, unchanged. The target is RTX PRO 6000 Blackwell with one
+card (TP1) or two (TP2).
+
+## Flash-Next keeps native MTP as the maintained default
+
+The `next` profile (FR-Spec) and `next-plain` (without FR-Spec) keep their
+existing recipes — `.97` and `.981` static memory fraction, 4 requests /
+24 Mamba slots unless you override them — and keep receiving updates and
+testing. New setups start on `next`, both native profiles remain maintained,
+and a saved explicit choice is always preserved.
+
+**The native verify width is fixed by active concurrency:** block 8 for a
+single running request, block 4 for every batch of two or more, read from the
+bundled policy `configs/pennyroyal/adaptive-next.json`, which the launch
+recipes pin by hash. `next-plain` routes the same way, just without the
+FR-Spec map. One candidate width per tier makes the width a lookup on the
+batch size, so the acceptance EMA can no longer switch a single request to a
+narrower draft between boots — the acceptance-driven C1 width switching of
+the 3.0-era policy is gone.
 
 ## Flash-Next gets its own DFlash2 draft
 
@@ -20,29 +41,31 @@ image-workload headroom, 6 requests / 36 Mamba slots, a 2,048-token draft
 window, and draft GPU KV bounded to the sliding window without taking host
 HiCache capacity (PR91, PR92).
 
-TP2 is expected to work; it has not been tested on two-GPU hardware.
+**The profile now uses FlashInfer for target linear-attention verification**
+(`--linear-attn-verify-backend flashinfer`, PR104). Both the native launch
+files and the container startup files select it automatically. On the final
+candidate, matched screens show single-request decode at block 6 rising from
+227.37 to 241.49 tok/s mean (sampled peak 339.53) and the full six-request
+batch at block 4 from 503.41 to 504.80 tok/s aggregate (peak 568.90); the
+completed ten-slide presentation reached 217.19 tok/s mean (peak 448.70).
 
 **Verification widths are fixed by active concurrency:** block 6 for a single
 running request, block 4 for every batch of two or more, read from the bundled
 policy `configs/pennyroyal/adaptive-dflash2.json`.
 
-**Native NEXTN MTP is the maintained default.** The `next` and `next-plain`
-profiles keep their existing recipes, with and without FR-Spec respectively,
-and continue to receive updates and testing. New setups use the native-MTP
-profile; `next-dflash2` stays fully available as an opt-in, and a saved
-explicit choice is preserved. The native verify width is likewise fixed by
-active concurrency — block 8 for a single running request, block 4 for every
-batch of two or more, one candidate per tier in
-`configs/pennyroyal/adaptive-next.json`, so the acceptance EMA cannot trade
-widths between boots.
+DFlash2 offers more token-pool capacity; we are still evaluating performance
+across concurrency levels. TP2 is expected to work for this profile; it has
+not been tested on two-GPU hardware.
 
 ## KV pool sizing is automatic
 
 The launch recipes no longer request a preset KV-token cap (PR86). SGLang
 sizes the shared pool from the GPU memory it profiles at boot, inside the
 recipe's static memory fraction, and reports the resolved number in the startup
-output; the 3.1 Flash-Next candidate boot resolved a 1,210,944-token pool this
-way. An explicit `MAX_TOTAL_TOKENS` remains available as a deliberate,
+output; the 3.1 candidate boot of the optional DFlash2 profile resolved a
+1,210,944-token target KV pool this way. The maintained native-MTP profiles
+size their pool the same way and report their own resolved number at startup.
+An explicit `MAX_TOTAL_TOKENS` remains available as a deliberate,
 page-aligned positive cap on every profile, and startup summaries say which of
 the two paths produced the number you are reading.
 
@@ -55,6 +78,11 @@ the two paths produced the number you are reading.
   DFlash2 block sizes (PR96).
 - Mixing token-probability requests with ordinary generation no longer
   triggers the identified scheduler crash (PR97).
+- The beta configurator learned the `next-dflash2` profile on both the native
+  and container paths (PR94): it prompts for the draft checkpoint and carries
+  the fixed-width policy and FlashInfer verification from the samples. The
+  external container configuration files and the manual native recipes remain
+  the primary setup paths; the configurator stays an optional beta.
 - The agreed upstream-fix subset (PR79) lands QSA cache-restore ordering and
   packed-scratch initialization, the shared Chat/Responses `chat_template`
   trust gate, absent `tool_calls` fields, stable stream timestamps, 400
@@ -68,31 +96,34 @@ the two paths produced the number you are reading.
 
 Native generation rates — mean and sampled peak over complete active-decode
 intervals, reasoning included — on one RTX PRO 6000 at TP1, normal non-greedy
-sampling. Full conditions and source labels are in
-[RESULTS.md](RESULTS.md#penny-royal-31).
+sampling. Each row keeps its recorded source and configuration label; full
+conditions are in [RESULTS.md](RESULTS.md#penny-royal-31).
 
 | Profile / workload | Mean tok/s | Sampled peak tok/s |
 |---|---:|---:|
-| Flash-Next DFlash2 — presentation workflow (agentic), C1 W6 (final candidate source `a60f442`) | **194.56** | **421.35** |
-| Flash-Next — coding flow, C1 W6 (`5ca3f39`) | 235.60 | 417.50 |
-| Flash-Next DFlash2 — single request, C1 W6 (optional DFlash2 profile) | **228.44** | **336.20** |
-| Flash-Next — single request, C1 W4 (`5ca3f39`) | 214.18 | 306.44 |
-| Flash-Next — full six-request batch, aggregate, W4 (`5ca3f39`) | 566.14 | 657.52 |
-| 27B DFlash2 — single request, fixed W8 (`27f9eaa`) | 133.06 | 232.07 |
-| 27B DFlash2 — full four-request batch, aggregate (`27f9eaa`) | 459.74 | 570.73 |
+| Flash-Next native MTP — single request, C1 W8, `a60f442` (maintained default) | **227.54** | **375.90** |
+| Flash-Next DFlash2 + FlashInfer — single request, C1 W6, `a60f442` (optional profile) | **241.49** | **339.53** |
+| Flash-Next DFlash2 + FlashInfer — full six-request batch, aggregate, W4, `a60f442` | **504.80** | **568.90** |
+| Flash-Next DFlash2 + FlashInfer — presentation workflow (agentic), C1 W6, explicit medium, `a60f442` | **217.19** | **448.70** |
+| 27B DFlash2 — single request, fixed W8, `27f9eaa` | 133.06 | 232.07 |
+| 27B DFlash2 — full four-request batch, aggregate, `27f9eaa` | 459.74 | 570.73 |
 
-| Cold prompt | Flash-Next prefill tok/s | 27B prefill tok/s |
+| Cold prompt | Flash-Next DFlash2 prefill tok/s | 27B prefill tok/s |
 |---|---:|---:|
 | 63,906 tokens | 15,365.38 | 6,421.59 |
 | 489,921 tokens | 8,715.05 | 1,677.10 |
 
-Both profiles completed the recorded reasoning, tool, vision, long-context and
-RAM/NIXL restore checks on the qualified sources. The presentation workflow
-(agentic) ran end to end at block 6: 121 model turns, all matched one-to-one
-against the retained timestamps, 192,349 output tokens including reasoning,
-prompt growth 42,637 to 253,267 tokens. Reasoning-suite scores: 93.46/100
-(Flash-Next) and 96.94/100 (27B) on actual answer grading; recorded deviations are listed with
-the measurements.
+The presentation workflow (agentic) completed end to end on the optional
+profile at FlashInfer verification and explicit medium: 70 model turns, all
+matched one-to-one against the retained timestamps, 132,873 output tokens
+including reasoning, prompt growth 42,527 to 206,219 tokens, and the finished
+deck previewed. Dated earlier 3.1 screens — the five-slide xhigh presentation
+(194.56 / 421.35), the coding flow (235.60 / 417.50) and the fixed-W4 rates —
+were recorded on the Triton verification path and keep their original labels
+in RESULTS.md; a medium-effort coding rerun did not complete and is not an
+accepted published benchmark. Reasoning-suite scores: 93.46/100 (Flash-Next,
+recorded on the DFlash2 qualification) and 96.94/100 (27B) on actual answer
+grading; recorded deviations are listed with the measurements.
 
 ## Updating
 
@@ -121,7 +152,10 @@ are in [CONFIGURATION.md](CONFIGURATION.md).
   coding, including the ports and integration work.
 - [John](https://github.com/jpezzulli), Penny and Codex worked through the
   architecture, tuning and debugging together — including the width-routing
-  decision and the memory-fraction measurements.
+  decision, the memory-fraction measurements and the verification-backend
+  choice.
 
-The machine-readable record, including source identities and validation scope,
-is [release-3.1.json](release-3.1.json).
+This release is in preparation with the final artifact pending: the tag
+`pennyroyal-v3.1.0` and the `v3.1.0` image are planned, and the published
+revision and image digest will be recorded when they exist (see
+[release-3.1.json](release-3.1.json)).
