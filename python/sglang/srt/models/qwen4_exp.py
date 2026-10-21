@@ -2065,6 +2065,10 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         )
         if hasattr(self, "norm"):
             delattr(self, "norm")
+        # Zero-based ids of the layers whose completed output feeds a DFlash2
+        # draft, set by set_dflash_layers_to_capture. Empty for every other
+        # launch (plain AR, NEXTN/MTP, EAGLE3).
+        self._dflash_completed_layer_ids: Tuple[int, ...] = ()
         hc_config = HyperConnectionConfig(
             hc_count=self.hc_count,
             hidden_size=self.hidden_size,
@@ -2076,6 +2080,60 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         self.hyper_connection_mixer = GatedResidual(
             hc_config, use_combine=False, online_fp8=True
         )
+
+    def set_dflash_layers_to_capture(self, layer_ids: list[int]) -> None:
+        """Capture DFlash2 target features at these *completed* layers.
+
+        Ownership: DFlash2 was trained on the output of a finished target layer,
+        so the ids in the draft config are used as given. The inherited
+        Qwen3/Qwen3-VL hook re-expresses them as before-layer indices (``+1``)
+        for a single residual stream, and this backbone has no such stream to
+        read at that point: every layer carries the packed hyper-connection
+        state (``hc_count`` streams side by side) and none of them implements
+        the communicator capture hook. So the boundary lives here instead, and
+        each feature is the mean over the streams the checkpoint was trained
+        with -- ``len(layer_ids) * hidden_size`` features per token, which is
+        what the draft's ``fc`` expects.
+
+        The order is kept as given: ``forward`` visits layers ascending, so the
+        captured features are re-ordered into this sequence before packing -- the
+        draft's ``fc`` weights are not symmetric across its input slots, and a
+        re-sorted feature row would read another layer's values out of a slot.
+
+        Ordinary tensor parallelism needs no special case here: every rank
+        holds the completed layer's full-width hyper-connection state, because
+        the attention output is all-reduced before the hyper-connection combine
+        and the ordinary-TP MoE block reduces its output before returning. The
+        stream mean therefore reads the same values on every rank and the
+        capture adds no collective of its own. What the feature cannot survive
+        is a split pipeline -- only the last stage's hidden states reach the
+        draft -- so layers outside this rank's range stop below instead of
+        silently drafting from the wrong features. The published checkpoint was
+        validated at TP1; plain TP>1 follows from the argument above but is not
+        yet validated on more than one GPU.
+        """
+        if not self.pp_group.is_last_rank:
+            return
+        ids = [int(layer_id) for layer_id in (layer_ids or ())]
+        if not ids:
+            raise ValueError(
+                "DFLASH requires explicit target_layer_ids for hyper-connection "
+                "capture; the draft config carried none."
+            )
+        if len(set(ids)) != len(ids):
+            raise ValueError(
+                f"Qwen4Exp DFlash2 target_layer_ids contain duplicates: {ids}."
+            )
+        for layer_id in ids:
+            # On a split pipeline only the last stage's hidden states can reach
+            # the draft, so a layer owned by another stage is unusable here.
+            if not self.start_layer <= layer_id < self.end_layer:
+                raise ValueError(
+                    "Qwen4Exp DFlash2 target_layer_ids contains a layer outside "
+                    f"this rank's capture range: layer_id={layer_id}, "
+                    f"start_layer={self.start_layer}, end_layer={self.end_layer}."
+                )
+        self._dflash_completed_layer_ids = tuple(ids)
 
     def forward(
         self,
@@ -2101,6 +2159,10 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
         )
         residual = None
         aux_hidden_states = []
+        # DFlash2 features are collected per layer id, not appended: this loop
+        # visits layers ascending while the draft's fc expects the configured
+        # order, which is the checkpoint's and need not be sorted.
+        dflash_features: dict[int, torch.Tensor] = {}
         for i in range(self.start_layer, self.end_layer):
             layer = self.layers[i]
             if i + 1 < self.end_layer:
@@ -2120,11 +2182,33 @@ class Qwen4ExpModel(Qwen3_5ForCausalLM):
                         else None
                     ),
                 )
+            if i in self._dflash_completed_layer_ids:
+                # Layer i is complete here: hidden_states is the packed
+                # hyper-connection state it produced, one hidden_size block per
+                # stream. Averaging the streams is the feature the draft trained
+                # on, and mean allocates, so later layers cannot mutate it.
+                assert hidden_states.shape[-1] == self.hc_count * self.hidden_size, (
+                    f"packed hyper-connection width mismatch: got "
+                    f"{hidden_states.shape[-1]} for hc_count={self.hc_count} "
+                    f"hidden_size={self.hidden_size}"
+                )
+                dflash_features[i] = hidden_states.unflatten(
+                    -1, (self.hc_count, self.hidden_size)
+                ).mean(dim=-2)
 
         _commit_ple_batch(ple_batch, forward_batch)
 
         hc_hidden_states = hidden_states
         hidden_states, _ = self.hyper_connection_mixer.mix(hidden_states)
+        if self._dflash_completed_layer_ids:
+            # Same tuple arity in every forward mode, including the idle rows a
+            # captured graph replays, and one feature per requested id in the
+            # requested order: every id was validated onto this rank, so no slot
+            # can be missing. The draft consumes features, not HC state.
+            return hidden_states, [
+                dflash_features[layer_id]
+                for layer_id in self._dflash_completed_layer_ids
+            ]
         if not forward_batch.forward_mode.is_idle():
             return hidden_states, hc_hidden_states
 
@@ -2166,6 +2250,12 @@ class Qwen4ExpVLModel(Qwen4ExpModel):
             forward_batch=forward_batch,
             inputs_embeds=input_embeds,
         )
+        if getattr(self, "_dflash_completed_layer_ids", ()):
+            # DFlash2 capture: this tuple is (hidden, aux features), which the
+            # multimodal routine's caller unpacks for the logits processor.
+            # Reading it as HC state here would hand the draft the packed streams
+            # and leave output.hidden_states without either.
+            return model_output
         if isinstance(model_output, tuple):
             hidden_states, self.last_hc_hidden_states = model_output
             return hidden_states
@@ -2193,6 +2283,24 @@ class Qwen4ExpForConditionalGeneration(Qwen3VLForConditionalGeneration):
         self.deepstack_visual_indexes = (
             self.visual.deepstack_visual_indexes if self.visual is not None else []
         )
+
+    def set_dflash_layers_to_capture(self, layer_ids: Optional[list[int]]) -> None:
+        """Hand the draft config's layer ids to the backbone unchanged.
+
+        The inherited Qwen3-VL hook exists to translate HF-style "after layer k"
+        ids into the before-layer indices a plain residual stream captures at.
+        The hyper-connection backbone captures the completed layer itself (see
+        ``Qwen4ExpModel.set_dflash_layers_to_capture``), so shifting here too
+        would capture different layers than the draft was trained on.
+        """
+        if not self.pp_group.is_last_rank:
+            return
+        if layer_ids is None:
+            raise ValueError(
+                "DFLASH requires explicit layer_ids for aux hidden capture."
+            )
+        self.capture_aux_hidden_states = True
+        self.model.set_dflash_layers_to_capture(layer_ids)
 
     @torch.no_grad()
     def forward(self, *args, **kwargs):
