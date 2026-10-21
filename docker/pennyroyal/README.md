@@ -15,10 +15,10 @@ For a native install, use [BUILD.md](../../BUILD.md).
 Your host
   run.sh                  image, GPUs, port, user and host mount paths
   config/
-    start-flash-next-dflash2.sh  model and SGLang startup settings (default)
+    start-flash-next-frspec.sh   model and SGLang startup settings (default)
+    start-flash-next.sh    native-MTP startup settings without FR-Spec
+    start-flash-next-dflash2.sh  optional Flash-Next DFlash2 + draft startup settings
     start-27b-dflash2.sh   alternative 27B + draft startup settings
-    start-flash-next-frspec.sh   deprecated native-MTP Flash-Next startup settings
-    start-flash-next.sh    deprecated native-MTP startup settings without FR-Spec
     nixl-posix.toml / nixl-posix-frspec.toml   disk-cache settings
   model files             mounted read-only at /models
   compiler/runtime cache  mounted writable at /cache
@@ -65,10 +65,10 @@ chmod +x run.sh
 ```
 
 The source files are also available here: [run.sh](launch/run.sh),
-[default Flash-Next DFlash2 startup](launch/config/start-flash-next-dflash2.sh),
-[27B startup](launch/config/start-27b-dflash2.sh),
-[deprecated FR-Spec / native-MTP startup](launch/config/start-flash-next-frspec.sh),
-[deprecated non-FR native-MTP startup](launch/config/start-flash-next.sh), and
+[default native-MTP Flash-Next startup](launch/config/start-flash-next-frspec.sh),
+[non-FR native-MTP startup](launch/config/start-flash-next.sh),
+[optional Flash-Next DFlash2 startup](launch/config/start-flash-next-dflash2.sh),
+[27B startup](launch/config/start-27b-dflash2.sh), and
 [FR-Spec NIXL settings](launch/config/nixl-posix-frspec.toml).
 
 ## Edit your configuration
@@ -87,13 +87,14 @@ PLE placement and image preprocessing are in this startup file.
 
 | Profile | Startup file |
 |---|---|
-| Flash-Next with DFlash2 + FR-Spec (default, qualified) | `config/start-flash-next-dflash2.sh` |
+| Flash-Next, native NEXTN MTP with FR-Spec (default, qualified) | `config/start-flash-next-frspec.sh` |
+| Flash-Next without FR-Spec | `config/start-flash-next.sh` |
+| Flash-Next with DFlash2 + FR-Spec (optional, qualified) | `config/start-flash-next-dflash2.sh` |
 | 27B FP8 with DFlash2 | `config/start-27b-dflash2.sh` |
-| Flash-Next, native NEXTN MTP with FR-Spec (deprecated) | `config/start-flash-next-frspec.sh` |
-| Flash-Next without FR-Spec (deprecated) | `config/start-flash-next.sh` |
 
-The two native-MTP profiles still run with their existing recipes; they are
-deprecated and receive no further updates or testing.
+The native-MTP profiles are the maintained default with their existing
+recipes; the DFlash2 profile is a fully supported opt-in. An explicitly saved
+profile choice is always preserved.
 
 For TP2, expose both RTX PRO 6000 GPUs in `run.sh` and set `TP_SIZE=2` in the
 startup file. If using a sidecar for image processing, expose that GPU too

@@ -9,7 +9,7 @@
 # through the shell.
 #
 # Usage: ./run-penny [--profile NAME] [--config PATH] [--check] [--show-config]
-#   --profile NAME   next-dflash2 (default), next, next-plain, or 27b
+#   --profile NAME   next (default), next-plain, next-dflash2, or 27b
 #   --config PATH    use this saved config instead of the default one
 #   --check          validate the config without a GPU and exit
 #   --show-config    print the resolved configuration and launch command

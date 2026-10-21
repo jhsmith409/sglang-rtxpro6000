@@ -266,22 +266,22 @@ def test_launcher_default_startup_keeps_the_script_own_nixl_config(tmp_path):
         str(nixl),
     )
     assert result.returncode == 0, result.stderr
-    assert argv[-3:] == ["exec", "bash", "/config/start-flash-next-dflash2.sh"]
+    assert argv[-3:] == ["exec", "bash", "/config/start-flash-next-frspec.sh"]
     assert values_after(argv, "--volume")[0] == f"{CONFIGS}:/config:ro"
     assert values_after(argv, "--volume")[3] == f"{nixl}:/nixl"
     # Nothing was named, so the selected script keeps the config it names.
     assert "-e" not in argv
 
 
-def test_the_baked_image_command_starts_the_routed_dflash2_recipe(tmp_path):
+def test_the_baked_image_command_starts_the_native_mtp_recipe(tmp_path):
     # A bare container start hands the Dockerfile CMD to the entry point, so the
-    # baked default has to name the qualified profile. An explicit legacy choice
-    # still has to reach its own recipe.
+    # baked default has to name the maintained native-MTP profile. An explicit
+    # DFlash2 choice still has to reach its own routed recipe.
     dockerfile = (ENTRYPOINT.parent / "Dockerfile").read_text()
     cmd_lines = [line for line in dockerfile.splitlines() if line.startswith("CMD [")]
-    assert cmd_lines == ['CMD ["next-dflash2"]'], cmd_lines
+    assert cmd_lines == ['CMD ["next"]'], cmd_lines
 
-    def dispatch(profile_argument: str):
+    def dispatch(profile_argument: str | None):
         root, capture, env_capture = image_root(tmp_path)
         capture.unlink(missing_ok=True)
         env_capture.unlink(missing_ok=True)
@@ -290,7 +290,11 @@ def test_the_baked_image_command_starts_the_routed_dflash2_recipe(tmp_path):
         for directory in (cache, nixl):
             directory.mkdir(exist_ok=True)
         result = subprocess.run(
-            ["bash", str(ENTRYPOINT), profile_argument],
+            [
+                "bash",
+                str(ENTRYPOINT),
+                *([profile_argument] if profile_argument else []),
+            ],
             env=clean_env(
                 REPO_ROOT=str(root),
                 CACHE_BASE=str(cache),
@@ -324,6 +328,12 @@ def test_the_baked_image_command_starts_the_routed_dflash2_recipe(tmp_path):
     # The FR-Spec recipe pins the qualified target tokenizer, so the stand-in
     # checkpoint stops it inside that recipe — which is the dispatch proof, and
     # the server line is never reached.
+    assert result.returncode != 0
+    assert "qualified FR-Spec tokenizer" in result.stderr, result.stderr
+    assert argv == []
+
+    # A missing argument selects the same maintained native-MTP default.
+    result, argv = dispatch(None)
     assert result.returncode != 0
     assert "qualified FR-Spec tokenizer" in result.stderr, result.stderr
     assert argv == []

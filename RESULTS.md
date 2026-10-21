@@ -14,8 +14,9 @@ The older H3PO raw table remains at its existing link.
 
 ## Penny Royal 3.1
 
-Recorded October 2026 on one RTX PRO 6000 Blackwell (TP1). The Flash-Next
-profile is the new default: our OrcaRouter ModelOpt NVFP4 checkpoint with the
+Recorded October 2026 on one RTX PRO 6000 Blackwell (TP1). The maintained
+default Flash-Next profile stays native NEXTN MTP with FR-Spec; the DFlash2
+configurations below record the optional profile: our OrcaRouter ModelOpt NVFP4 checkpoint with the
 separate `incoai/Qwen3.8-Flash-Next-DFlash2` draft, FR-Spec on the bundled
 65,536-ID map, width routed by active batch size (block 6 for one request,
 block 4 for two or more), 524,288-token context, 6 requests / 36 Mamba slots,
@@ -54,7 +55,7 @@ was one natural xhigh workflow. The earlier recorded presentation averaged
 |---|---:|---:|---|
 | Presentation workflow (agentic), C1 W6 | 194.56 | 421.35 | `a60f442`, DFlash2 + FR-Spec, routed W6 |
 | Coding flow, C1 W6 | 235.60 | 417.50 | `5ca3f39`, FR-Spec W6 |
-| Normal single request, C1 W6 (current default) | 228.44 | 336.20 | DFlash2 + FR-Spec, C1 W6 |
+| Normal single request, C1 W6 (optional DFlash2 profile) | 228.44 | 336.20 | DFlash2 + FR-Spec, C1 W6 |
 | Regular C1 W4 | 214.18 | 306.44 | `5ca3f39`, FR-Spec fixed W4 |
 | Full six-request C6, aggregate | 566.14 | 657.52 | `5ca3f39`, FR-Spec W4, 15 full-C6 intervals |
 

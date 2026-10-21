@@ -22,11 +22,11 @@ so long-running sessions can pick up from cached history.
 [Performance](#performance) ·
 [3.1 release notes](RELEASE_NOTES_3.1.md) · [Community results](COMMUNITY-RESULTS.md)
 
-**Penny Royal 3.1:** Flash-Next now runs DFlash2 with
-FR-Spec and a separate draft model as the default profile, with fixed
-concurrency width routing (block 6 for one request, block 4 for two or more),
-automatic KV pool sizing replacing the preset cap, and the native NEXTN MTP
-recipes deprecated but still launchable.
+**Penny Royal 3.1:** Flash-Next runs native NEXTN MTP with FR-Spec as the
+maintained default profile, with automatic KV pool sizing replacing the preset
+cap; Flash-Next DFlash2 with a separate draft model and fixed concurrency width
+routing (block 6 for one request, block 4 for two or more) is fully available
+as an optional profile.
 
 <a id="hicache-and-nixl"></a>
 
@@ -62,12 +62,12 @@ how the state is stored and restored.
 ## What's new in 3.1
 
 Flash-Next gets **DFlash2 with FR-Spec** and its own draft model,
-`incoai/Qwen3.8-Flash-Next-DFlash2`, and that profile is the default for new
-setups. The draft block is **fixed by active concurrency** — block 6 for a
-single running request, block 4 for two or more. The **KV pool is sized
-automatically** from profiled memory instead of a preset cap; an explicit
-`MAX_TOTAL_TOKENS` remains available. The native NEXTN MTP recipes still
-launch but are **deprecated**: no further updates or testing. Scheduler
+`incoai/Qwen3.8-Flash-Next-DFlash2`, as an optional profile. The draft block is
+**fixed by active concurrency** — block 6 for a single running request, block 4
+for two or more. The **KV pool is sized automatically**
+from profiled memory instead of a preset cap; an explicit
+`MAX_TOTAL_TOKENS` remains available. The native NEXTN MTP recipes remain the
+maintained default and keep receiving updates and testing. Scheduler
 admission, stop-regex inside speculative blocks and mixed-probability requests
 are fixed. TP2 is expected to work; it has not been tested on two-GPU
 hardware. See the
@@ -84,7 +84,7 @@ images, HiCache RAM prefix caching, and optional NIXL disk caching.
 
 | Model | Weights | Speculative decoding | Checkpoints |
 |---|---|---|---|
-| **Qwen3.8 Flash-Next** | NVFP4 experts, automatic FP8 dense layers on SM120 | DFlash2 with a separate draft model and FR-Spec; width routed by batch size (block 6 at C1, block 4 at C2+); native NEXTN MTP deprecated | [Our OrcaRouter ModelOpt conversion](https://huggingface.co/jpezzulli/OrcaRouter-Qwen3.8-Flash-Next-Uncensored-ModelOpt-NVFP4) · [RadixArk](https://huggingface.co/RadixArk/Qwen3.8-Flash-Next-NVFP4) · [Flash-Next DFlash2 draft](https://huggingface.co/incoai/Qwen3.8-Flash-Next-DFlash2) |
+| **Qwen3.8 Flash-Next** | NVFP4 experts, automatic FP8 dense layers on SM120 | DFlash2 with a separate draft model and FR-Spec; width routed by batch size (block 6 at C1, block 4 at C2+); maintained native NEXTN MTP is the default | [Our OrcaRouter ModelOpt conversion](https://huggingface.co/jpezzulli/OrcaRouter-Qwen3.8-Flash-Next-Uncensored-ModelOpt-NVFP4) · [RadixArk](https://huggingface.co/RadixArk/Qwen3.8-Flash-Next-NVFP4) · [Flash-Next DFlash2 draft](https://huggingface.co/incoai/Qwen3.8-Flash-Next-DFlash2) |
 | **Qwen3.8-27B** | FP8 | DFlash2, with a separate draft model at fixed block 8 | [Qwen FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8) · [DFlash2 draft](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) |
 
 I personally run Flash-Next on **one RTX PRO 6000 at C=6**, with **524,288-token
@@ -111,11 +111,12 @@ TP is the number of inference GPUs.**
 
 **FR-Spec rides along at every concurrency.** FR-Spec narrows the vocabulary
 searched by the draft head; routing selects how many tokens it drafts. The
-target model keeps its full vocabulary. The qualified launch is the
-[DFlash2 recipe](RUN.md#launch-flash-next-with-dflash2); the native-MTP
-[FR-Spec](RUN.md#launch-flash-next-with-fr-spec) and
-[non-FR recipes](RUN.md#launch-flash-next-without-fr-spec-alternative) remain
-available as deprecated options.
+target model keeps its full vocabulary. The maintained default is the
+[FR-Spec native-MTP recipe](RUN.md#launch-flash-next-with-fr-spec), with the
+[non-FR recipe](RUN.md#launch-flash-next-without-fr-spec-alternative) also
+selectable; the optional
+[DFlash2 recipe](RUN.md#launch-flash-next-with-dflash2) remains fully
+available as an opt-in.
 
 For 27B alternatives, see the [Swift 27B results](SWIFT-27B.md) and the
 [OrcaRouter FP8 checkpoint](https://huggingface.co/orcarouter/Qwen3.8-27B-Uncensored-FP8).
@@ -139,7 +140,7 @@ other rows keep the source and width of the screen that recorded them.
 |---|---:|---:|
 | Presentation workflow (agentic), C1 W6 | **194.56** | **421.35** |
 | Coding flow, C1 W6 | **235.60** | **417.50** |
-| Single request, C1 W6 (current default) | **228.44** | **336.20** |
+| Single request, C1 W6, optional DFlash2 profile | **228.44** | **336.20** |
 | Single request, C1 fixed W4 | 214.18 | 306.44 |
 | Six concurrent requests, aggregate, fixed W4 | 566.14 | 657.52 |
 
@@ -205,8 +206,8 @@ and restart/cache effects is the [configuration reference](CONFIGURATION.md).
 ```text
 your-host/
   run.sh                              image, GPU selection, ports and mounts
-  config/start-flash-next-dflash2.sh  model and SGLang startup settings
-  config/nixl-posix.toml              optional disk-cache settings
+  config/start-flash-next-frspec.sh   model and SGLang startup settings
+  config/nixl-posix-frspec.toml        optional disk-cache settings
 ```
 
 Prepare those files before starting. `run.sh` starts Docker and mounts your

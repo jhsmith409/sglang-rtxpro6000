@@ -304,17 +304,15 @@ class SetupSessionTests(FixtureMixin):
 
     def test_enter_keeps_the_numbered_default_everywhere(self):
         # Blank lines at every menu keep the documented default: the current
-        # default profile (Flash-Next DFlash2), media cpu, advanced declined,
-        # save confirmed. The draft path is required by that profile, so it is
-        # answered rather than left blank.
+        # default profile (Flash-Next native MTP + FR-Spec), media cpu,
+        # advanced declined, save confirmed. That profile needs no draft, so
+        # the wizard never asks for one.
         code, output, path = self.run_setup(
-            [""]
-            + self.basics(str(self.next_model), draft=str(self.next_draft))
-            + ["", ""]
+            [""] + self.basics(str(self.next_model)) + ["", ""]
         )
         self.assertEqual(code, 0, output)
         saved = pc.read_env_file(path)
-        self.assertEqual(saved[pc.PROFILE_KEY], "next-dflash2")
+        self.assertEqual(saved[pc.PROFILE_KEY], "next")
         self.assertEqual(saved["SGLANG_MM_PREPROCESS_DEVICE"], "cpu")
         self.assertNotIn("MAX_RUNNING_REQUESTS", saved)
         self.assertIn("Saved ", output)

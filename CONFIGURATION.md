@@ -38,7 +38,7 @@ Select the profile with `PENNYROYAL_PROFILE`. Values marked *pinned* are fixed
 in that recipe's launch line; a saved override for them does not reach the
 server.
 
-| | `next-dflash2` (default) | `27b` | `next` (deprecated) | `next-plain` (deprecated) |
+| | `next-dflash2` (optional) | `27b` | `next` (default) | `next-plain` |
 |---|---|---|---|---|
 | Target | OrcaRouter ModelOpt NVFP4 Flash-Next | Qwen3.8-27B FP8 | Flash-Next NVFP4 | Flash-Next NVFP4 |
 | Draft | `incoai/Qwen3.8-Flash-Next-DFlash2`, BF16 unquantized | `incoai/Qwen3.8-27B-DFlash2` | none (in-checkpoint NEXTN head) | none |
@@ -67,8 +67,8 @@ bucket and runs with `--disable-prefill-cuda-graph`.
 | Setting | Default | Notes |
 |---|---|---|
 | `TARGET_MODEL` | required | Target checkpoint directory (native: absolute or relative to `REPO_ROOT`; container: the path inside `/models`). |
-| `DRAFT_MODEL` | required for `27b` and `next-dflash2` | Separate DFlash2 draft checkpoint. It is a distinct download from the target; the deprecated NEXTN profiles need no draft. |
-| `PENNYROYAL_PROFILE` | `next-dflash2` | New setups default to the Flash-Next DFlash2 profile. `next` and `next-plain` keep their existing recipes and still launch, but are deprecated and receive no further updates or testing. |
+| `DRAFT_MODEL` | required for `27b` and `next-dflash2` | Separate DFlash2 draft checkpoint. It is a distinct download from the target; the native-MTP profiles need no draft. |
+| `PENNYROYAL_PROFILE` | `next` | New setups default to the maintained native-MTP Flash-Next profile with FR-Spec (`next-plain` is the same without the map). `next-dflash2` keeps its existing recipe and stays fully available as an opt-in; saved profile choices are always preserved. |
 | `REPO_ROOT` / `VENV_PATH` | native: your checkout and its `.venv` | Recipes use `$REPO_ROOT/.venv/bin/sglang` and its Python. |
 | `SGLANG_EXE` / `PYTHON` | derived | Overrides for an environment outside the checkout. |
 | `CACHE_BASE` | native `~/.cache/pennyroyal`; container `/cache` mount | Compiler/JIT and runtime caches; recipes create subdirectories. WSL2 note below. |
@@ -130,7 +130,7 @@ bucket and runs with `--disable-prefill-cuda-graph`.
 | `PENNYROYAL_IMAGE` / `--image` | `ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0` (planned tag) | An explicit pin survives every later setup save: update it to the new tag to upgrade (in an edited `run.sh`, keep the `IMAGE=` assignment — the script runs under `set -u`; in saved setup settings or the Compose `.env` you may instead delete the line to follow the launcher default). Startup files belong to their release's image. |
 | `PENNYROYAL_PORT` / `--port` | 8001 | Published API port. |
 | `PENNYROYAL_USER` / `--user`, `USER_ID`/`GROUP_ID` | `1000:1000` | Numeric identity that must own the writable cache mounts. |
-| `PENNYROYAL_STARTUP` / `--startup` | `config/start-flash-next-dflash2.sh` | Selected host startup file; the whole directory is mounted read-only at `/config`. |
+| `PENNYROYAL_STARTUP` / `--startup` | `config/start-flash-next-frspec.sh` | Selected host startup file; the whole directory is mounted read-only at `/config`. |
 | `PENNYROYAL_NIXL_CONFIG` / `--nixl-config` | empty | Overrides the TOML the startup file names; omit to keep the one your startup script selects. |
 
 Container saved setup settings pass these recipe keys into the container
@@ -157,9 +157,10 @@ from a launch generated with `NIXL=off`.
 - **WSL2 and cache mounts.** Pinned allocation plus writable cache directories
   owned by the running UID/GID; the container path keeps using the numeric
   identity.
-- **Deprecated profiles keep working.** `next` and `next-plain` still launch
-  with their existing recipes and their adaptive 4/8 selector at C1, but new
-  setup should start on `next-dflash2`.
+- **Native-MTP profiles are maintained.** `next` and `next-plain` launch
+  with their existing recipes and their adaptive 4/8 selector at C1, remain
+  the default for new setups, and keep receiving updates; `next-dflash2` is
+  the opt-in alternative.
 
 ## Restarts and cache effects
 

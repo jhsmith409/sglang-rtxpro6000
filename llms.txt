@@ -1,21 +1,23 @@
 # Penny Royal — Qwen3.8 on RTX PRO 6000 Blackwell
 
-> SGLang-derived runtime for long-context local agents on one or two NVIDIA RTX PRO 6000 Blackwell GPUs: Flash-Next NVFP4 with DFlash2, a separate draft model and FR-Spec, or Qwen3.8-27B FP8 with DFlash2.
+> SGLang-derived runtime for long-context local agents on one or two NVIDIA RTX PRO 6000 Blackwell GPUs: Flash-Next NVFP4 with native NEXTN MTP and FR-Spec — with optional DFlash2 on a separate draft model — or Qwen3.8-27B FP8 with DFlash2.
 
 Canonical repository: https://github.com/jpezzulli/sglang-rtxpro6000
 Display name: Penny Royal. CLI, API model name, paths and package identifiers
 keep the existing `pennyroyal` spelling.
 
-Penny Royal 3.1 makes
-Flash-Next DFlash2 the default profile: the existing OrcaRouter ModelOpt NVFP4
+Penny Royal 3.1 keeps
+the native NEXTN MTP Flash-Next profiles as the maintained default with
+unchanged recipes, and adds Flash-Next DFlash2 as an optional profile: the
+existing OrcaRouter ModelOpt NVFP4
 target with the separate `incoai/Qwen3.8-Flash-Next-DFlash2` draft, FR-Spec on
 the bundled 65,536-ID map, and verification widths fixed by active concurrency —
 block 6 for one running request, block 4 for two or more. Automatic KV pool
 sizing replaces the preset cap; an explicit `MAX_TOTAL_TOKENS` override remains.
-The native NEXTN MTP Flash-Next profiles still launch with unchanged recipes
-but are deprecated: no further updates or testing. The 27B FP8 DFlash2 profile
+The 27B FP8 DFlash2 profile
 is unchanged at fixed block 8. Most runtime PRs are merged to public main; the
-planned tag is `pennyroyal-v3.1.0` and the planned image is
+release status is preparation with final publication pending:
+the planned tag is `pennyroyal-v3.1.0` and the planned image is
 `ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0`; see release-3.1.json for source
 identity and publication status.
 
@@ -78,7 +80,7 @@ tool workflow.
 Current Flash-Next results on one RTX PRO 6000: the completed five-slide
 presentation workflow (agentic) at C1 with the block-6 width on the final
 candidate (`a60f442`) recorded 194.56 tok/s mean / 421.35 sampled peak; the
-coding flow at C1 W6 recorded 235.60 / 417.50 (`5ca3f39`); the current-default
+coding flow at C1 W6 recorded 235.60 / 417.50 (`5ca3f39`); the optional-profile
 normal single-request screen at C1 W6 recorded 228.44 / 336.20 (DFlash2 +
 FR-Spec); the regular single-request screen at C1 with fixed W4 recorded 214.18
 / 306.44; the full six-request batch (aggregate, W4) recorded 566.14 / 657.52.
@@ -91,7 +93,7 @@ actual answer grading on the qualified sources; extended or repetitive
 reasoning is not penalized and `ask_user` is a valid tool choice. Recorded
 deviations are listed with the measurements.
 
-- [3.1 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.1.md): Flash-Next DFlash2 default, fixed concurrency widths, automatic KV sizing, MTP deprecation, TP2 support and focused scheduler fixes.
+- [3.1 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.1.md): maintained native-MTP default, optional Flash-Next DFlash2, fixed concurrency widths, automatic KV sizing, TP2 support and focused scheduler fixes.
 - [3.1 machine-readable release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/release-3.1.json): Source identities, settings, reused qualification and pending publication status.
 - [3.0.2 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.0.2.md): Host-memory recovery, MTP switching and focused compatibility fixes.
 - [3.0.2 machine-readable release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/release-3.0.2.json): Source, qualification and container status.

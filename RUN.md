@@ -1,11 +1,12 @@
 # Run Penny Royal on RTX PRO 6000 Blackwell
 
 This is the native launch guide for Penny Royal. The same source runs
-Qwen3.8 Flash-Next NVFP4 with the separate DFlash2 draft and FR-Spec, or
-Qwen3.8-27B FP8 with its own DFlash2 draft, on NVIDIA RTX PRO 6000 Blackwell
-(SM120), TP1 or TP2. The Flash-Next native NEXTN MTP path still launches, but it
-is deprecated: it keeps its existing recipe and gets no further updates or
-testing. Both profiles serve an OpenAI-compatible model named `pennyroyal`.
+Qwen3.8 Flash-Next NVFP4 with native NEXTN MTP and FR-Spec, the same target
+with the separate DFlash2 draft, or Qwen3.8-27B FP8 with its own DFlash2
+draft, on NVIDIA RTX PRO 6000 Blackwell (SM120), TP1 or TP2. The Flash-Next
+native NEXTN MTP path is the maintained default; the DFlash2 path stays fully
+available as an opt-in with its existing recipe.
+Both profiles serve an OpenAI-compatible model named `pennyroyal`.
 
 Build the release with [BUILD.md](BUILD.md) first. Container users should
 follow the separate [container guide](docker/pennyroyal/README.md).
@@ -22,11 +23,11 @@ Blackwell at TP1 or TP2; optional Ampere/Ada sidecar image processing is separat
 from the inference cards.
 
 Start with [Common setup](#common-setup), then choose
-[Flash-Next with DFlash2](#launch-flash-next-with-dflash2) — the default newly
+[Flash-Next with FR-Spec](#launch-flash-next-with-fr-spec) — the default newly
 generated setup — [27B with DFlash2](#launch-27b-with-dflash2), or one of the
-deprecated native-MTP recipes,
-[Flash-Next with FR-Spec](#launch-flash-next-with-fr-spec) and the
-[optional non-FR alternative](#launch-flash-next-without-fr-spec-alternative).
+optional native-MTP and DFlash2 recipes,
+[Flash-Next with DFlash2](#launch-flash-next-with-dflash2) and the
+[non-FR alternative](#launch-flash-next-without-fr-spec-alternative).
 Stop and restart the server after changing configuration.
 
 The optional [beta configurator](CONFIGURE.md) can write the settings for you.
@@ -81,9 +82,9 @@ the launcher. Stop and restart the server after changing them.
 
 ## Launch Flash-Next with FR-Spec
 
-**Deprecated native MTP.** This recipe still works exactly as before and its
-recipe is unchanged; it just gets no further updates or testing, and new setups
-start on [Flash-Next with DFlash2](#launch-flash-next-with-dflash2) instead.
+**Maintained native MTP, the default.** This recipe still works exactly as before and its
+recipe is unchanged; it remains what new setups start on, and the opt-in
+[Flash-Next with DFlash2](#launch-flash-next-with-dflash2) is a separate choice.
 Native NEXTN MTP is part of the target checkpoint, so only the target model is
 required:
 
@@ -401,7 +402,8 @@ graphs in the startup output.
 
 ## Launch Flash-Next without FR-Spec (alternative)
 
-**Deprecated native MTP**, like the FR-Spec recipe above. This recipe keeps the
+**Native MTP without FR-Spec**, like the FR-Spec recipe above, stays maintained and
+selectable, just not the default. This recipe keeps the
 same target, context, KV/state pools, native NEXTN, HiCache, and NIXL
 configuration while omitting the reduced-vocabulary map:
 
@@ -424,8 +426,8 @@ The online-FP8 and PLE-placement options also apply to this recipe.
 
 ## Launch Flash-Next with DFlash2
 
-`PENNYROYAL_PROFILE=next-dflash2` is the default Flash-Next choice for newly
-generated setup. It runs the same accepted NVFP4 target and the bundled FR-Spec
+`PENNYROYAL_PROFILE=next-dflash2` is the optional Flash-Next DFlash2 choice;
+select it explicitly (or keep a saved file that names it) to use it. It runs the same accepted NVFP4 target and the bundled FR-Spec
 64K token map against the separate
 `incoai/Qwen3.8-Flash-Next-DFlash2` draft — its own download, next to the
 target:

@@ -66,7 +66,7 @@ class StartupSummaryTest(unittest.TestCase):
         )
 
         self.assertIn(
-            "Profile: Qwen3.8 Flash-Next / native NEXTN MTP (deprecated) | TP: 2",
+            "Profile: Qwen3.8 Flash-Next / native NEXTN MTP | TP: 2",
             output,
         )
         self.assertIn("Model: /models/Flash Next [qualified]", output)

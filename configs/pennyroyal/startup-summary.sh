@@ -47,10 +47,9 @@ pennyroyal_startup_summary() {
   done
   case "${setting[--speculative-algorithm]:-none}" in
     NEXTN)
-      # Native MTP is deprecated: it still launches, but it receives no
-      # further updates or testing, and the summary says so where the operator
-      # reads it.
-      profile='Qwen3.8 Flash-Next / native NEXTN MTP (deprecated)'
+      # Native MTP is the maintained default launch path; the summary names
+      # it the same way the recipes do.
+      profile='Qwen3.8 Flash-Next / native NEXTN MTP'
       ;;
     DFLASH)
       # Two DFlash2 launches run this same algorithm against different targets,

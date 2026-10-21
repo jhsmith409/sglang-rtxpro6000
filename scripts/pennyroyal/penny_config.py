@@ -53,12 +53,12 @@ RECIPE_BY_PROFILE = {
     "next-dflash2": "serve-flash-next-dflash2.sh",
     "27b": "serve-qwen38-27b-dflash2.sh",
 }
-# The two native-MTP profiles still launch and still work, but they are
-# deprecated: no further updates or testing are promised for them. The label is
-# where the wizard, the saved-config summary, and --show-config all say so.
+# The two native-MTP profiles are maintained: they are the default launch
+# path and keep receiving updates and testing. The label is where the wizard,
+# the saved-config summary, and --show-config describe each profile.
 PROFILE_LABEL = {
-    "next": "Flash-Next NVFP4 + FR-Spec/native NEXTN MTP (deprecated)",
-    "next-plain": "Flash-Next NVFP4 + native NEXTN MTP without FR-Spec (deprecated)",
+    "next": "Flash-Next NVFP4 + FR-Spec/native NEXTN MTP (default)",
+    "next-plain": "Flash-Next NVFP4 + native NEXTN MTP without FR-Spec",
     "next-dflash2": "Flash-Next NVFP4 + DFlash2 (DFLASH, FR-Spec, routed widths)",
     "27b": "Qwen3.8-27B FP8 + DFlash2",
 }
@@ -873,9 +873,10 @@ def load_config(
 
 
 def default_profile(mode: str) -> str:
-    """Newly generated setups start on the Flash-Next DFlash2 profile; the
-    deprecated native-MTP profiles stay selectable and saved files keep theirs."""
-    return "next-dflash2"
+    """Newly generated setups start on the maintained native-MTP FR-Spec
+    profile; next-dflash2 stays fully selectable as an opt-in and saved files
+    keep theirs."""
+    return "next"
 
 
 @dataclass

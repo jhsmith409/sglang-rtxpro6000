@@ -221,8 +221,8 @@ class DFlash2RoutedWidthRecipeTest(unittest.TestCase):
                 self.assertNotIn("--cuda-graph-bs-decode", self.text(launcher))
                 self.assertNotIn('--field "decode_graph_bs', self.text(launcher))
 
-    def test_the_deprecated_mtp_recipes_are_untouched_by_this_profile(self):
-        # Deprecated is not deleted: the native-MTP launchers keep their own
+    def test_the_maintained_mtp_recipes_are_untouched_by_this_profile(self):
+        # Maintained is not rewritten: the native-MTP launchers keep their own
         # static NEXTN widths, policy and memory fraction, and none of them
         # picks up the routed DFlash2 policy file.
         for launcher in NEXT_LAUNCHERS:
