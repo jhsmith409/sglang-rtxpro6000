@@ -152,9 +152,7 @@ class TestDecodeProducerTensorRows(CustomTestCase):
             )
             if token_ids:
                 self.assertEqual(idxs[i], list(token_ids))
-                self.assertEqual(
-                    vals[i].tolist(), ref[i, token_ids].tolist()
-                )
+                self.assertEqual(vals[i].tolist(), ref[i, token_ids].tolist())
             else:
                 self.assertEqual(idxs[i], [])
                 self.assertEqual(vals[i].numel(), 0)
@@ -197,12 +195,8 @@ class TestSpecDecodeMixedBatch(CustomTestCase):
         # The score request accepts 2 tokens, the plain chat request 1.
         token_ids_per_req = [SCORE_IDS, None] if requester_first else [None, SCORE_IDS]
         accept_lens = [2, 1] if requester_first else [1, 2]
-        reqs = [
-            _make_req(f"r{i}", ids) for i, ids in enumerate(token_ids_per_req)
-        ]
-        batch = _make_batch(
-            reqs, list(token_ids_per_req), [0, 0], spec=True
-        )
+        reqs = [_make_req(f"r{i}", ids) for i, ids in enumerate(token_ids_per_req)]
+        batch = _make_batch(reqs, list(token_ids_per_req), [0, 0], spec=True)
         logits_output = LogitsProcessorOutput(next_token_logits=logits)
         predict = torch.arange(bs * stride, dtype=torch.long) % VOCAB
 
@@ -253,9 +247,7 @@ class TestSpecDecodeMixedBatch(CustomTestCase):
         # are not attached to the request that never asked for them.
         self.assertEqual(reqs[plain].logprob.output_token_ids_logprobs_val, [])
         for j in range(stride):
-            row = logits_output.next_token_token_ids_logprobs_val[
-                plain * stride + j
-            ]
+            row = logits_output.next_token_token_ids_logprobs_val[plain * stride + j]
             self.assertIsInstance(row, list)
             self.assertEqual(row, [])
         # Accepted-token logprobs/ids untouched for both reqs.
@@ -371,12 +363,12 @@ class TestNonSpecDecodeAndPrefillConversion(CustomTestCase):
         ]
         processor = OutputLogprobProcessor()
         result = processor.compute_logprobs(
-            logprobs.clone(), list(top_logprobs_nums), list(token_ids),
+            logprobs.clone(),
+            list(top_logprobs_nums),
+            list(token_ids),
             torch.tensor([7, 9], dtype=torch.long),
         )
-        logits_output = LogitsProcessorOutput(
-            next_token_logits=torch.randn(2, VOCAB)
-        )
+        logits_output = LogitsProcessorOutput(next_token_logits=torch.randn(2, VOCAB))
         result.write_output_to(logits_output)
         return logprobs, reqs, token_ids, logits_output
 
@@ -386,17 +378,13 @@ class TestNonSpecDecodeAndPrefillConversion(CustomTestCase):
                 logprobs, reqs, token_ids, logits_output = self._mixed_output(
                     requester_first, [0, 0]
                 )
-                batch = _make_batch(
-                    reqs, list(token_ids), [0, 0], spec=False
-                )
+                batch = _make_batch(reqs, list(token_ids), [0, 0], spec=False)
                 proc = _make_processor()
-                next_token_ids, next_token_logprobs = (
-                    proc._normalize_decode_outputs(
-                        batch=batch,
-                        result=SimpleNamespace(),
-                        logits_output=logits_output,
-                        next_token_ids=torch.tensor([7, 9], dtype=torch.long),
-                    )
+                next_token_ids, next_token_logprobs = proc._normalize_decode_outputs(
+                    batch=batch,
+                    result=SimpleNamespace(),
+                    logits_output=logits_output,
+                    next_token_ids=torch.tensor([7, 9], dtype=torch.long),
                 )
                 for i, req in enumerate(reqs):
                     proc._apply_decode_logprobs(
@@ -429,9 +417,7 @@ class TestNonSpecDecodeAndPrefillConversion(CustomTestCase):
                 logprobs, reqs, token_ids, logits_output = self._mixed_output(
                     requester_first, [2, 0]
                 )
-                batch = _make_batch(
-                    reqs, list(token_ids), [2, 0], spec=False
-                )
+                batch = _make_batch(reqs, list(token_ids), [2, 0], spec=False)
                 proc = _make_processor()
                 proc.move_logprobs_to_cpu(batch=batch, logits_output=logits_output)
                 requester = 0 if requester_first else 1
@@ -440,20 +426,14 @@ class TestNonSpecDecodeAndPrefillConversion(CustomTestCase):
                     logprobs[requester, SCORE_IDS].tolist(),
                 )
                 self.assertEqual(
-                    logits_output.next_token_token_ids_logprobs_val[
-                        1 - requester
-                    ],
+                    logits_output.next_token_token_ids_logprobs_val[1 - requester],
                     [],
                 )
                 # Mixed top-k rows were already tensor-shaped (k=0 rows
                 # sliced to empty tensors) even before the fix; pin that.
                 # top_logprobs_nums is positional: row 0 asks k=2, row 1 k=0.
-                self.assertEqual(
-                    logits_output.next_token_top_logprobs_val[1], []
-                )
-                self.assertEqual(
-                    len(logits_output.next_token_top_logprobs_val[0]), 2
-                )
+                self.assertEqual(logits_output.next_token_top_logprobs_val[1], [])
+                self.assertEqual(len(logits_output.next_token_top_logprobs_val[0]), 2)
 
     def test_scoring_producer_contract_pinned(self):
         """compute_logprobs_only (prefill-only scoring) already returned
@@ -472,7 +452,9 @@ class TestNonSpecDecodeAndPrefillConversion(CustomTestCase):
         result.write_output_to(logits_output)
         vals = logits_output.next_token_token_ids_logprobs_val
         self.assertEqual([v.tolist() for v in vals], [[], ref[1, SCORE_IDS].tolist()])
-        self.assertEqual(logits_output.next_token_token_ids_logprobs_idx, [[], list(SCORE_IDS)])
+        self.assertEqual(
+            logits_output.next_token_token_ids_logprobs_idx, [[], list(SCORE_IDS)]
+        )
 
 
 if __name__ == "__main__":
