@@ -33,6 +33,7 @@ qualification or reverse John's decision to reuse the 27B checks for 3.0.
 
 ## README and documentation
 
+- [ ] Configuration reference completed after release scope and defaults are agreed: all supported settings and overrides, defaults and recommendations for each profile, where to set them, interactions, and restart/cache effects. Record the checked revision on the release item.
 - [ ] README and affected documentation updated for the final included features, settings and measured results. Record the checked revision on the release item.
 - [ ] Human-readable wording; no defensive qualification boilerplate.
 - [ ] Search terms, descriptive headings and canonical links preserved.
