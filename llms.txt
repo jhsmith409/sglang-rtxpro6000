@@ -84,14 +84,20 @@ are aggregate, not per-request rates. Use normal non-greedy sampling and record
 the actual reasoning settings. A synthetic agent transcript is not a real
 tool workflow.
 
-Current Flash-Next results on one RTX PRO 6000, final candidate source
-(`a60f442`): the maintained native-MTP default recorded 227.54 tok/s mean /
-375.90 sampled peak for a single request at its routed block-8 width; on the
-optional DFlash2 profile with FlashInfer verification, a single request at
-block 6 recorded 241.49 / 339.53, the full six-request batch at block 4
-recorded 504.80 / 568.90 aggregate, and the completed ten-slide presentation
-workflow (agentic, explicit medium) recorded 217.19 / 448.70 with 70 model
-turns and 132,873 output tokens. Dated earlier 3.1 screens on the Triton
+Current Flash-Next results on one RTX PRO 6000. The maintained native-MTP
+default, measured October 21, 2026 on the merged final source (`fe5f02c`) at
+its routed widths, recorded 197.87 tok/s mean / 345.30 sampled peak for a
+single request at block 8, 555.11 / 731.06 aggregate at full C4 and 472.79 /
+528.49 aggregate at full C6 with block 4, a real coding workflow at 252.83 /
+501.63 and the completed ten-slide presentation workflow (agentic, explicit
+medium) at 216.23 / 525.80 with 80 model turns and 133,430 output tokens. On
+the optional DFlash2 profile with FlashInfer verification (final candidate
+source `a60f442`), a single request at block 6 recorded 241.49 / 339.53, the
+full six-request batch at block 4 recorded 504.80 / 568.90 aggregate, and the
+completed ten-slide presentation workflow (agentic, explicit medium) recorded
+217.19 / 448.70 with 70 model turns and 132,873 output tokens. The earlier
+native C1 screen at `a60f442` (227.54 / 375.90) remains dated evidence.
+Dated earlier 3.1 screens on the Triton
 verification path remain in RESULTS.md: the five-slide xhigh presentation
 194.56 / 421.35, the coding flow 235.60 / 417.50 (`5ca3f39`), the normal
 single request 228.44 / 336.20, and the fixed-W4 screens 214.18 / 306.44 and

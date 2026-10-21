@@ -126,11 +126,11 @@
         299.68
       ],
       "next_c4_aggregate": [
-        496.12604,
+        532.0455548073085,
         644.96
       ],
       "next_c6_aggregate": [
-        457.50336,
+        477.5310660089201,
         705.98
       ],
       "27b_short_c1": [
@@ -150,7 +150,8 @@
         434.49
       ]
     },
-    "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak; non-greedy/xhigh. Current-RC comparison baselines used private diagnostics, three repeats; C1 4096-output cap, C4/C6 existing queued ShareGPT 1024-output protocol including fill/drain. Coding rate covers only first 35 isolated C1 turns, not the whole job; presentation 136 requests / 177 tool calls / 260,615 output tokens, observed C1. Different older tasks are not matched A/B."
+    "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak; non-greedy/xhigh. Current-RC comparison baselines used private diagnostics, three repeats; C1 4096-output cap, C4/C6 existing queued 12/18-request ShareGPT 1024-output protocol; the published C4/C6 means were corrected on 2026-10-21 to full-batch intervals excluding fill/drain (see concurrency_correction). Coding rate covers only first 35 isolated C1 turns, not the whole job; presentation 136 requests / 177 tool calls / 260,615 output tokens, observed C1. Different older tasks are not matched A/B.",
+    "concurrency_correction": "Dated 2026-10-21. The two published native concurrency means were recomputed from the retained raw samples of the same runs (source 81f006db32978519d09302b9984016d6e1bfd48b, invocation 4568fcb7ce014906950e7fb4b2480214; retained per-repeat journals under candidates/maya-width-selector-20261017/qualification/short-concurrency/baseline/repeat-{1,2,3}-c{4,6}.jsonl on the measurement host), by root collection and an independent review. Corrected full-batch means, excluding fill/drain: C4 532.0455548073085 (71 intervals over 47.65203309059143 s), C6 477.5310660089201 (63 intervals over 71.39823198318481 s); peaks unchanged. They replace the drain-inclusive means 496.12604 and 457.50336. Same runs, settings, diagnostics and protocol; no new tests were run."
   },
   "upgrade": {
     "matching_startup_files_required": true,

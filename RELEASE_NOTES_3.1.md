@@ -59,8 +59,9 @@ not been tested on two-GPU hardware.
 The launch recipes no longer request a preset KV-token cap (PR86). SGLang
 sizes the shared pool from the GPU memory it profiles at boot, inside the
 recipe's static memory fraction, and reports the resolved number in the startup
-output; the 3.1 candidate boot of the optional DFlash2 profile resolved a
-1,210,944-token target KV pool this way. The maintained native-MTP profiles
+output; this system resolved a 1,210,944-token target KV pool for the optional
+DFlash2 profile and a 1,081,792-token pool for the final native-MTP
+measurements. The maintained native-MTP profiles
 size their pool the same way and report their own resolved number at startup.
 An explicit `MAX_TOTAL_TOKENS` remains available as a deliberate,
 page-aligned positive cap on every profile, and startup summaries say which of
@@ -91,14 +92,18 @@ the two paths produced the number you are reading.
 
 ## Current results
 
-Native generation rates — mean and sampled peak over complete active-decode
-intervals, reasoning included — on one RTX PRO 6000 at TP1, normal non-greedy
-sampling. Each row keeps its recorded source and configuration label; full
-conditions are in [RESULTS.md](RESULTS.md#penny-royal-31).
+SGLang generation rates on one RTX PRO 6000: mean and sampled peak, including
+reasoning, with normal non-greedy sampling. The final native MTP runs used
+block 8 at C1 and block 4 at C4/C6. Full settings and source records are in
+[RESULTS.md](RESULTS.md#penny-royal-31).
 
 | Profile / workload | Mean tok/s | Sampled peak tok/s |
 |---|---:|---:|
-| Flash-Next native MTP — single request, C1 W8, `a60f442` (maintained default) | **227.54** | **375.90** |
+| Flash-Next native MTP — single request, C1 W8, `fe5f02c` (maintained default) | **197.87** | **345.30** |
+| Flash-Next native MTP — full four-request batch, aggregate, W4, `fe5f02c` | **555.11** | **731.06** |
+| Flash-Next native MTP — full six-request batch, aggregate, W4, `fe5f02c` | **472.79** | **528.49** |
+| Flash-Next native MTP — coding workflow (agentic), C1 W8, medium, `fe5f02c` | **252.83** | **501.63** |
+| Flash-Next native MTP — presentation workflow (agentic), C1 W8, medium, `fe5f02c` | **216.23** | **525.80** |
 | Flash-Next DFlash2 + FlashInfer — single request, C1 W6, `a60f442` (optional profile) | **241.49** | **339.53** |
 | Flash-Next DFlash2 + FlashInfer — full six-request batch, aggregate, W4, `a60f442` | **504.80** | **568.90** |
 | Flash-Next DFlash2 + FlashInfer — presentation workflow (agentic), C1 W6, explicit medium, `a60f442` | **217.19** | **448.70** |
@@ -110,11 +115,11 @@ conditions are in [RESULTS.md](RESULTS.md#penny-royal-31).
 | 63,906 tokens | 15,365.38 | 6,421.59 |
 | 489,921 tokens | 8,715.05 | 1,677.10 |
 
-The agentic presentation completed 70 model turns and generated 132,873
-tokens, including reasoning, with medium reasoning selected. Conversation
-history grew from 42,527 to 206,219 tokens. The DFlash2 reasoning
-qualification scored 93.46/100 for Flash-Next and 96.94/100 for 27B.
-[RESULTS.md](RESULTS.md#penny-royal-31) records the qualification and earlier
+The native coding workflow completed naturally at 27 model turns and the
+agentic ten-slide presentation at 80 model turns, both at medium reasoning on
+block 8. The DFlash2 reasoning qualification scored 93.46/100 for Flash-Next
+and 96.94/100 for 27B, recorded on the DFlash2 profile.
+[RESULTS.md](RESULTS.md#penny-royal-31) records the qualification and all
 measurements.
 
 ## Updating
