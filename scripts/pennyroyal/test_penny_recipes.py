@@ -1,4 +1,4 @@
-"""CPU-only checks that the approved 3.0 adaptive MTP default reaches every
+"""CPU-only checks that the approved fixed Next width policy reaches every
 public Flash-Next launch path and the generated container setup.
 
 The runtime implements adaptive speculative decoding behind the existing
@@ -24,7 +24,7 @@ import penny_config as pc  # noqa: E402
 # The qualified approved policy; the shipped file and every recipe checksum
 # check must carry exactly this identity.
 ADAPTIVE_NEXT_SHA256 = (
-    "658158c29d2de8d2ee9c58ea8e7ac68a2dc70dd1ac1c46642e0a4302b798728f"
+    "3edaa87d66f535caae0bddb8f457f03fce0f6dc1f4e8091b20495a0dc9da41fb"
 )
 RELEASED_IMAGE = "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0"
 TOKEN_MAP_SHA256 = "becfa41d394b86c26c632bea8f3c6ea64bbb76d7b238d8673c06afae21269f25"
@@ -64,8 +64,8 @@ class AdaptiveLaunchRecipeTest(unittest.TestCase):
         for launcher in NEXT_LAUNCHERS:
             text = self.text(launcher)
             with self.subTest(launcher=str(launcher)):
-                # Launch at the widest candidate (W8 at topk=1) so no
-                # adaptive width can exceed the captured graphs.
+                # Launch at the fixed C1 width (W8 at topk=1) so no routed
+                # width can exceed the captured graphs.
                 self.assertIn("--speculative-num-steps 7", text)
                 self.assertIn("--speculative-eagle-topk 1", text)
                 self.assertIn("--speculative-num-draft-tokens 8", text)

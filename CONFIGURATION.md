@@ -42,7 +42,7 @@ server.
 |---|---|---|---|---|
 | Target | OrcaRouter ModelOpt NVFP4 Flash-Next | Qwen3.8-27B FP8 | Flash-Next NVFP4 | Flash-Next NVFP4 |
 | Draft | `incoai/Qwen3.8-Flash-Next-DFlash2`, BF16 unquantized | `incoai/Qwen3.8-27B-DFlash2` | none (in-checkpoint NEXTN head) | none |
-| Speculation | DFLASH; FR-Spec 65,536-ID map; width routed: block **6** at one running request, **4** at two or more | DFLASH, fixed block 8 | NEXTN MTP + FR-Spec, C1-only adaptive 4/8 | NEXTN MTP only |
+| Speculation | DFLASH; FR-Spec 65,536-ID map; width routed: block **6** at one running request, **4** at two or more | DFLASH, fixed block 8 | NEXTN MTP + FR-Spec; width fixed by concurrency: block **8** at one running request, **4** at two or more | NEXTN MTP only |
 | `--mem-fraction-static` | 0.95 | 0.92 (pinned) | 0.97 | 0.981 |
 | Requests / Mamba slots | 6 / 36 | 4 / 24 (pinned) | 4 / 24 | 4 / 24 |
 | Context | 524,288 (pinned) | 524,288 (pinned) | 524,288 (pinned) | 524,288 (pinned) |
@@ -158,7 +158,8 @@ from a launch generated with `NIXL=off`.
   owned by the running UID/GID; the container path keeps using the numeric
   identity.
 - **Native-MTP profiles are maintained.** `next` and `next-plain` launch
-  with their existing recipes and their adaptive 4/8 selector at C1, remain
+  with their existing recipes and their fixed concurrency widths (block 8 at
+  one running request, block 4 at two or more), remain
   the default for new setups, and keep receiving updates; `next-dflash2` is
   the opt-in alternative.
 

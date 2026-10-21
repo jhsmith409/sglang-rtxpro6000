@@ -30,7 +30,11 @@ policy `configs/pennyroyal/adaptive-dflash2.json`.
 profiles keep their existing recipes, with and without FR-Spec respectively,
 and continue to receive updates and testing. New setups use the native-MTP
 profile; `next-dflash2` stays fully available as an opt-in, and a saved
-explicit choice is preserved.
+explicit choice is preserved. The native verify width is likewise fixed by
+active concurrency — block 8 for a single running request, block 4 for every
+batch of two or more, one candidate per tier in
+`configs/pennyroyal/adaptive-next.json`, so the acceptance EMA cannot trade
+widths between boots.
 
 ## KV pool sizing is automatic
 
