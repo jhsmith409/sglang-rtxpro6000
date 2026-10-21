@@ -14,10 +14,9 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
     _evict_mamba_for_device_alloc,
     _evict_swa_for_device_alloc,
     _split_hicache_size,
+    build_draft_swa_entry,
     build_full_draft_pools,
     build_pool_entry,
-    draft_swa_host_size,
-    draft_swa_tier,
 )
 from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool
 from sglang.srt.mem_cache.pool_host.group import HostPoolGroup
@@ -37,51 +36,99 @@ class _Pool:
         return self._kv_bytes
 
 
-class TestDraftSwaHostTier(CustomTestCase):
-    """The windowed DFLASH draft's host tier is a share of the HiCache budget.
+class TestDraftHostFollowsTargetHost(CustomTestCase):
+    """A windowed DFLASH draft's host tier tracks the TARGET host capacity.
 
-    ``build_kv_host_pool`` treats an omitted host_size as the WHOLE configured
-    --hicache-size, so the draft's bounded window pool must be given its own
-    proportional share or it would claim the cache the target's KV rows are
-    sized from (and double the operator's RAM setting).
+    Every ordinary draft sidecar is sized by a host_to_device_ratio against the
+    target host pool's logical slot count (see ``build_full_draft_pools``), so
+    draft host slots follow the operator's --hicache-size budget and do not
+    depend on how many draft GPU slots fit on the card. Windowing the draft's
+    GPU pool must not shrink its host tier, and the draft must not take a bite
+    out of the target's budget -- it is additional, as it always was.
     """
 
-    def _size(self, hicache_size, peer_bytes, draft_bytes):
-        with patch(
-            "sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler.get_memory",
-            return_value=SimpleNamespace(hicache_size=hicache_size),
+    TARGET_HOST_LOGICAL_SLOTS = 2_006_976
+
+    def _build(self, draft_slots):
+        from sglang.srt.mem_cache.cache_init_params import CacheInitParams
+        from sglang.srt.mem_cache.hybrid_cache import hybrid_pool_assembler as hpa
+
+        params = CacheInitParams(
+            disable=False,
+            req_to_token_pool=SimpleNamespace(),
+            token_to_kv_pool_allocator=SimpleNamespace(
+                swa_attn_allocator=SimpleNamespace(
+                    alloc=lambda n: None, free=lambda i: None
+                )
+            ),
+            page_size=64,
+            draft_swa_device_pool=_DraftPool(24064 * 640, size=draft_slots),
+            draft_swa_window=2048,
+        )
+        with (
+            patch.object(
+                hpa,
+                "_build_mha_mla_host_pool",
+                side_effect=lambda **kw: _FakeHostPool(kw["pool"].layer_num),
+            ) as build_host_pool,
+            patch.object(
+                hpa,
+                "build_kv_host_pool",
+                side_effect=lambda **kw: _FakeHostPool(kw["kv_pool"].layer_num),
+            ),
+            patch.object(hpa, "_get_allocator_type", return_value="default"),
+            patch.object(
+                hpa,
+                "get_memory",
+                return_value=SimpleNamespace(
+                    hicache_size=32,
+                    hicache_ratio=2.0,
+                    hicache_mem_layout="page_first",
+                ),
+            ),
         ):
-            return draft_swa_host_size(
-                swa_kv_pool=_Pool(draft_bytes),
-                peer_pools=(_Pool(peer_bytes),),
+            entry = build_draft_swa_entry(
+                params=params,
+                page_size=64,
+                target_host_logical_size=self.TARGET_HOST_LOGICAL_SLOTS,
             )
+        return entry, build_host_pool
 
-    def test_draft_tier_is_its_own_share(self):
-        # 32 GB total, draft device bytes are a quarter of the pool set.
-        share = self._size(32, 3 * 10**9, 1 * 10**9)
-        self.assertAlmostEqual(share, 8.0)
-        self.assertLess(share, 32)
+    def test_draft_host_slots_track_target_host_capacity(self):
+        # Shrinking only the draft's GPU capacity must leave its host tier at the
+        # target's host logical capacity: ratio * draft_slots == 2,006,976 always.
+        for draft_slots in (24064, 48128, 96256):
+            with self.subTest(draft_slots=draft_slots):
+                _, build_host_pool = self._build(draft_slots)
+                self.assertIsNotNone(
+                    build_host_pool.call_args,
+                    "draft host tier must be sized by the ratio path, not a fixed GB share",
+                )
+                kwargs = build_host_pool.call_args.kwargs
+                self.assertEqual(
+                    kwargs["host_to_device_ratio"],
+                    self.TARGET_HOST_LOGICAL_SLOTS / draft_slots,
+                )
+                self.assertEqual(
+                    round(draft_slots * kwargs["host_to_device_ratio"]),
+                    self.TARGET_HOST_LOGICAL_SLOTS,
+                )
+                self.assertEqual(kwargs["pool_label"], "draft_swa")
 
-    def test_ratio_mode_leaves_sizing_to_the_pool(self):
-        self.assertIsNone(self._size(0, 3 * 10**9, 1 * 10**9))
-
-    def test_target_peers_keep_the_rest_of_the_budget(self):
-        with patch(
-            "sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler.get_memory",
-            return_value=SimpleNamespace(hicache_size=32),
-        ):
-            kv, mamba, draft = _split_hicache_size(
-                32, (_Pool(3 * 10**9), _Pool(1 * 10**9), _Pool(4 * 10**9))
-            )
-        self.assertAlmostEqual(draft, 16.0)
-        self.assertAlmostEqual(kv + mamba + draft, 32.0)
+    def test_draft_entry_keeps_swa_semantics(self):
+        entry, _ = self._build(24064)
+        self.assertEqual(entry.name, PoolName.SWA)
+        self.assertFalse(entry.is_primary_index_anchor)
+        self.assertIsNotNone(entry.device_alloc_fn)
+        self.assertIsNotNone(entry.device_free_fn)
 
 
 class _DraftPool(_Pool):
-    def __init__(self, kv_bytes, layer_num=5):
+    def __init__(self, kv_bytes, layer_num=5, size=1024):
         super().__init__(kv_bytes)
         self.layer_num = layer_num
         self.page_size = 1
+        self.size = size
 
     def get_size_per_token(self):
         return 1
@@ -106,20 +153,29 @@ class _FakeStorage:
         self.registered.append(host_pool_name)
 
 
-def _seeded_group() -> HostPoolGroup:
+def _seeded_group(mamba=False) -> HostPoolGroup:
     """A real HostPoolGroup with a valid KV anchor, as every stack starts out."""
-    return HostPoolGroup(
-        [
+    entries = [
+        build_pool_entry(
+            name=PoolName.KV,
+            host_pool=_FakeHostPool(12),
+            device_pool=_Pool(16 * 10**9, layer_num=12),
+            layer_mapping={0: 0},
+            transfer_layer_num=12,
+            is_anchor=True,
+        )
+    ]
+    if mamba:
+        entries.append(
             build_pool_entry(
-                name=PoolName.KV,
-                host_pool=_FakeHostPool(12),
-                device_pool=_Pool(16 * 10**9, layer_num=12),
+                name=PoolName.MAMBA,
+                host_pool=_FakeHostPool(1),
+                device_pool=_Pool(4 * 10**9, layer_num=1),
                 layer_mapping={0: 0},
                 transfer_layer_num=12,
-                is_anchor=True,
             )
-        ]
-    )
+        )
+    return HostPoolGroup(entries)
 
 
 def _controller(group, storage=None):
@@ -137,18 +193,20 @@ def _controller(group, storage=None):
     return controller
 
 
-class TestDraftSwaRegistrationAndBudget(CustomTestCase):
-    """The draft tier goes through the controller, and out of the same budget.
+class TestTargetBudgetAndRegistration(CustomTestCase):
+    """The draft goes through the controller; the target keeps its whole budget.
 
     ``HostPoolGroup.add_entry`` alone skips both the per-pool host-release queue
     and the storage-backend registration the controller performs for entries
     added after construction -- on the NIXL profile that would leave the draft's
-    windowed rows unbacked. And the split has to come off the configured
-    --hicache-size the target stack is about to spend entirely, or the assembled
-    group exceeds the operator's setting.
+    windowed rows unbacked. And the draft's host tier is extra: the target's own
+    pools must still be sized from the whole configured --hicache-size, exactly
+    as before the draft pool was windowed.
     """
 
-    def _params(self, draft_bytes=4 * 10**9):
+    GROUP_LOGICAL_SIZE = 1024  # the seeded anchor's host logical slots
+
+    def _params(self, draft_slots=None):
         from sglang.srt.mem_cache.cache_init_params import CacheInitParams
 
         allocator = SimpleNamespace(
@@ -156,26 +214,31 @@ class TestDraftSwaRegistrationAndBudget(CustomTestCase):
                 alloc=lambda n: None, free=lambda i: None
             )
         )
+        req_to_token_pool = SimpleNamespace(
+            mamba_map={}, mamba_pool=_Pool(4 * 10**9, layer_num=1)
+        )
         return CacheInitParams(
             disable=False,
-            req_to_token_pool=SimpleNamespace(),
+            req_to_token_pool=req_to_token_pool,
             token_to_kv_pool_allocator=allocator,
             page_size=1,
-            draft_swa_device_pool=_DraftPool(draft_bytes),
-            draft_swa_window=2048,
+            draft_swa_device_pool=(
+                None
+                if draft_slots is None
+                else _DraftPool(24064 * 640, size=draft_slots)
+            ),
+            draft_swa_window=2048 if draft_slots is not None else None,
         )
 
-    def test_plain_strategy_registers_the_entry_via_the_controller(self):
+    def _drive(self, strategy, kvcache, stack_fn, mamba_group, draft_slots):
         from sglang.srt.mem_cache.hybrid_cache import hybrid_pool_assembler as hpa
-        from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
-            _PlainKvStrategy,
-        )
 
         captured = {}
+        draft_kwargs = {}
         # The SAME group and controller the stack builder returns are the ones
         # asserted on below, and registration is the real method, so the SWA entry
         # is genuinely in the group before component_host_pools reads it back.
-        group = _seeded_group()
+        group = _seeded_group(mamba=mamba_group)
         storage = _FakeStorage()
         controller = _controller(group, storage)
 
@@ -183,13 +246,14 @@ class TestDraftSwaRegistrationAndBudget(CustomTestCase):
             captured.update(kwargs)
             return group, controller
 
+        def fake_host_pool(**kwargs):
+            draft_kwargs.update(kwargs)
+            return _FakeHostPool(kwargs["pool"].layer_num)
+
         with (
-            patch.object(hpa, "build_kv_only_stack", side_effect=fake_stack),
-            patch.object(
-                hpa,
-                "build_kv_host_pool",
-                side_effect=lambda **kw: _FakeHostPool(kw["kv_pool"].layer_num),
-            ),
+            patch.object(hpa, stack_fn, side_effect=fake_stack),
+            patch.object(hpa, "_build_mha_mla_host_pool", side_effect=fake_host_pool),
+            patch.object(hpa, "_get_allocator_type", return_value="default"),
             patch.object(
                 hpa,
                 "get_memory",
@@ -204,22 +268,21 @@ class TestDraftSwaRegistrationAndBudget(CustomTestCase):
                 ),
             ),
         ):
-            result = _PlainKvStrategy().build(
+            result = strategy.build(
                 cache=SimpleNamespace(evict_host=lambda n, ct: None, page_size=1),
-                kvcache=_Pool(16 * 10**9),
-                params=self._params(),
+                kvcache=kvcache,
+                params=self._params(draft_slots=draft_slots),
                 server_args=SimpleNamespace(hicache_host_memory_mode="cache"),
                 load_cache_event=None,
                 storage_backend="nixl",
             )
+        return captured, draft_kwargs, group, controller, storage, result
 
-        # Draft device bytes are 4 GB of the 20 GB pool set, so a fifth of the
-        # 32 GB cache: 6.4 GB for the draft window, 25.6 GB left for the target's
-        # own tiers. Nothing is added on top of the operator's setting.
-        self.assertAlmostEqual(captured["host_budget_gb"], 32.0 - 6.4)
+    def _assert_registered(self, group, controller, storage, result):
         entry = group.get_entry(PoolName.SWA)
         self.assertEqual(entry.name, PoolName.SWA)
         self.assertIsNotNone(entry.device_alloc_fn)
+        self.assertIsNotNone(entry.device_free_fn)
         self.assertFalse(entry.is_primary_index_anchor)
         self.assertIn(ComponentType.SWA, result.component_host_pools)
         self.assertIs(result.component_host_pools[ComponentType.SWA], entry.host_pool)
@@ -227,6 +290,58 @@ class TestDraftSwaRegistrationAndBudget(CustomTestCase):
         self.assertIsInstance(
             controller.extra_host_mem_release_queues[PoolName.SWA], Queue
         )
+
+    def test_plain_strategy_registers_the_entry_via_the_controller(self):
+        from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
+            _PlainKvStrategy,
+        )
+
+        captured, draft_kwargs, group, controller, storage, result = self._drive(
+            _PlainKvStrategy(),
+            _Pool(16 * 10**9, layer_num=12),
+            "build_kv_only_stack",
+            mamba_group=False,
+            draft_slots=24064,
+        )
+
+        # The target's own host budget is not cut down to make room for the draft.
+        self.assertNotIn("host_budget_gb", captured)
+        # The draft's host tier is sized off the target host pool's logical slots,
+        # not off a byte share of the 32 GB cache the target just spent.
+        self.assertEqual(
+            draft_kwargs["host_to_device_ratio"],
+            self.GROUP_LOGICAL_SIZE / 24064,
+        )
+        self.assertEqual(draft_kwargs["pool_label"], "draft_swa")
+        self._assert_registered(group, controller, storage, result)
+
+    def test_mamba_strategy_registers_the_entry_via_the_controller(self):
+        from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
+            _MambaStrategy,
+        )
+
+        captured, draft_kwargs, group, controller, storage, result = self._drive(
+            _MambaStrategy(),
+            SimpleNamespace(
+                full_attention_layer_id_mapping={},
+                use_mla=False,
+                full_kv_pool=_Pool(16 * 10**9, layer_num=12),
+            ),
+            "build_hybrid_mamba_stack",
+            mamba_group=True,
+            draft_slots=6016,
+        )
+
+        self.assertNotIn("host_budget_gb", captured)
+        # A draft GPU pool 4x smaller still gets the target's full host capacity.
+        self.assertEqual(
+            draft_kwargs["host_to_device_ratio"],
+            self.GROUP_LOGICAL_SIZE / 6016,
+        )
+        self.assertEqual(
+            round(6016 * draft_kwargs["host_to_device_ratio"]), self.GROUP_LOGICAL_SIZE
+        )
+        self._assert_registered(group, controller, storage, result)
 
     def test_controller_registers_queue_and_storage(self):
         group = _seeded_group()
@@ -249,40 +364,25 @@ class TestDraftSwaRegistrationAndBudget(CustomTestCase):
         )
         self.assertEqual(storage.registered, [PoolName.SWA])
 
-    def test_tier_is_one_split_of_the_configured_budget(self):
-        with patch(
-            "sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler.get_memory",
-            return_value=SimpleNamespace(hicache_size=32),
-        ):
-            share, peer_budget = draft_swa_tier(
-                params=self._params(draft_bytes=4 * 10**9),
-                peer_pools=(_Pool(16 * 10**9),),
-            )
-        # 4 GB draft of 20 GB device bytes = 1/5 of the configured 32 GB.
-        self.assertAlmostEqual(share, 6.4)
-        self.assertAlmostEqual(peer_budget, 25.6)
-        # total stays at the operator's setting, it is not exceeded by the draft
-        self.assertAlmostEqual(share + peer_budget, 32.0)
-        with patch(
-            "sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler.get_memory",
-            return_value=SimpleNamespace(hicache_size=0),
-        ):
-            self.assertEqual(
-                draft_swa_tier(params=self._params(), peer_pools=()), (None, None)
-            )
-
-    def test_no_draft_pool_leaves_the_stack_untouched(self):
-        from sglang.srt.mem_cache.cache_init_params import CacheInitParams
-
-        params = CacheInitParams(
-            disable=False,
-            req_to_token_pool=SimpleNamespace(),
-            token_to_kv_pool_allocator=SimpleNamespace(),
-            page_size=1,
+    def test_no_draft_pool_keeps_the_plain_stack_untouched(self):
+        from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
+            _PlainKvStrategy,
         )
-        self.assertEqual(
-            draft_swa_tier(params=params, peer_pools=(_Pool(1),)), (None, None)
+
+        captured, draft_kwargs, group, controller, storage, result = self._drive(
+            _PlainKvStrategy(),
+            _Pool(16 * 10**9, layer_num=12),
+            "build_kv_only_stack",
+            mamba_group=False,
+            draft_slots=None,
         )
+
+        self.assertNotIn("host_budget_gb", captured)
+        self.assertEqual(draft_kwargs, {})
+        self.assertNotIn(PoolName.SWA, group.entry_map)
+        self.assertNotIn(ComponentType.SWA, result.component_host_pools)
+        self.assertEqual(storage.registered, [])
+        self.assertEqual(result.pools_desc, "KV")
 
 
 class TestDeviceAllocEviction(CustomTestCase):
