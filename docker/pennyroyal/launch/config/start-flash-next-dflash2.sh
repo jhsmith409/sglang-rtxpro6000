@@ -113,7 +113,7 @@ MAMBA_SSM_DTYPE=bfloat16
 MAMBA_CONV_DTYPE=bfloat16
 MAMBA_TRACK_INTERVAL=64
 PREFILL_CHUNK_SIZE=4096
-LINEAR_ATTN_VERIFY_BACKEND=triton
+LINEAR_ATTN_VERIFY_BACKEND=flashinfer
 SPECULATIVE_ALGORITHM=DFLASH
 # Width routing policy (block 6 at one request, block 4 at two or more) and the
 # qualified FR-Spec 64K token map are image/repo assets, read from $IMAGE_CONFIGS.
