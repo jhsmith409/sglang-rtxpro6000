@@ -92,15 +92,10 @@ the two paths produced the number you are reading.
 
 ## Current results
 
-Native generation rates — mean and sampled peak over complete active-decode
-intervals, reasoning included — on one RTX PRO 6000 at TP1, normal
-non-greedy sampling, recorded October 21, 2026 on the merged final source
-(`fe5f02c`) with the maintained default routing (block 8 at one running
-request, block 4 at two or more), `.97` static memory fraction at 6 requests /
-36 Mamba slots, diagnostics off, and an A4000 preprocessing sidecar. These
-native conditions apply to the native rows only; every other row keeps its
-recorded source and configuration label, and the full conditions for each are
-in [RESULTS.md](RESULTS.md#penny-royal-31).
+SGLang generation rates on one RTX PRO 6000: mean and sampled peak, including
+reasoning, with normal non-greedy sampling. The final native MTP runs used
+block 8 at C1 and block 4 at C4/C6. Full settings and source records are in
+[RESULTS.md](RESULTS.md#penny-royal-31).
 
 | Profile / workload | Mean tok/s | Sampled peak tok/s |
 |---|---:|---:|
