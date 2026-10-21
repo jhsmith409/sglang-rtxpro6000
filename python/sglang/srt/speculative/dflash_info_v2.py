@@ -10,7 +10,10 @@ from sglang.srt.environ import envs
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.mem_cache.allocation import alloc_for_spec_decode
 from sglang.srt.mem_cache.allocation_sizing import page_aligned_decode_alloc_lens
-from sglang.srt.runtime_context import get_spec
+from sglang.srt.runtime_context import (
+    get_spec,
+    max_speculative_num_draft_tokens,
+)
 from sglang.srt.speculative.spec_info import SpecInput, SpecInputType
 from sglang.srt.utils.common import is_pin_memory_available
 
@@ -138,8 +141,16 @@ class DFlashDraftInputV2(SpecInput):
         cur_kv_lens_cpu_t = self._prepare_cur_kv_lens_cpu_buf[:bs]
         nxt_kv_lens_cpu_t = self._prepare_nxt_kv_lens_cpu_buf[:bs]
 
-        # For DFLASH, each decode step needs a fixed-size verify block.
-        block_size = int(get_spec().speculative_num_draft_tokens)
+        # For DFLASH, each decode step needs a fixed-size verify block. The block
+        # width is decided later, at this batch's own forward boundary (a
+        # batch-size-routed width can be narrower than the launch width), so the
+        # reservation is always sized off the widest width the run can reach:
+        # this prepare cannot know the width it will run, and an under-reservation
+        # would write past the over-allocated mapping.
+        block_size = int(
+            max_speculative_num_draft_tokens()
+            or get_spec().speculative_num_draft_tokens
+        )
         if block_size <= 0:
             raise ValueError(
                 f"DFLASH invalid speculative_num_draft_tokens={block_size}."
