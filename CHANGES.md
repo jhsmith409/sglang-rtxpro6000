@@ -1,11 +1,13 @@
 # Penny Royal release history
 
-## 3.1 — Flash-Next DFlash2, automatic KV sizing, deprecated MTP
+## 3.1 — Flash-Next DFlash2 option, automatic KV sizing, maintained MTP default
 
-- Flash-Next default profile is now DFlash2 with the separate
+- Flash-Next gains an optional DFlash2 profile with the separate
   `incoai/Qwen3.8-Flash-Next-DFlash2` draft, the FR-Spec map, and the resident
   rowwise-FP8 output head; the verification block is fixed by active concurrency
-  (block 6 at one request, block 4 at two or more).
+  (block 6 at one request, block 4 at two or more). The maintained default
+  stays the native NEXTN MTP profile with FR-Spec, and explicit DFlash2
+  selections are preserved.
 - The preset KV-token cap is gone: the engine sizes the shared pool from
   profiled memory, and an explicit `MAX_TOTAL_TOKENS` stays available as a
   page-aligned override. Draft GPU KV is bounded to its sliding window while
@@ -14,8 +16,8 @@
   blocks, and mixed token-probability requests are fixed.
 - TP2 is part of the new Flash-Next DFlash2 capability: it is expected to
   work and has not been tested on two-GPU hardware.
-- The native NEXTN MTP Flash-Next profiles remain launchable with unchanged
-  recipes and are deprecated: no further updates or testing.
+- The native NEXTN MTP Flash-Next profiles are the maintained default with
+  unchanged recipes and continue to receive updates and testing.
 
 See the [3.1 release notes](RELEASE_NOTES_3.1.md) for the change list with
 problem/fix/user effect and credits, the [machine-readable record](release-3.1.json)

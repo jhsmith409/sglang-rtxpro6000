@@ -3,9 +3,9 @@
   "version": "3.1.0",
   "status": {
     "publication_approved": false,
-    "source_publication": "Accepted runtime and setup PRs merged; release documentation prepared.",
+    "source_publication": "Accepted runtime and setup PRs merged; the release is reopened and its default and maintenance status are corrected; status is release preparation and final publication pending.",
     "container": "pending",
-    "note": "Release tag, versioned image and GitHub release await final approval and the candidate image check."
+    "note": "Release tag, versioned image and GitHub release await final approval and the candidate image check; no release promotion."
   },
   "source": {
     "base_release": "pennyroyal-v3.0.2",
@@ -29,7 +29,7 @@
     {
       "id": "flash_next_dflash2_profile",
       "pr": 94,
-      "summary": "Flash-Next DFlash2 launch profile and setup candidate: separate incoai/Qwen3.8-Flash-Next-DFlash2 draft, FR-Spec 65,536-ID map, resident rowwise-FP8 output head reuse, 0.95 memory fraction for image-workload headroom, 6 requests / 36 Mamba slots, 524,288-token context, 2,048-token draft window, HiCache/NIXL unchanged; becomes the default profile for new setups.",
+      "summary": "Flash-Next DFlash2 launch profile and setup candidate: separate incoai/Qwen3.8-Flash-Next-DFlash2 draft, FR-Spec 65,536-ID map, resident rowwise-FP8 output head reuse, 0.95 memory fraction for image-workload headroom, 6 requests / 36 Mamba slots, 524,288-token context, 2,048-token draft window, HiCache/NIXL unchanged; offered as an optional profile — explicit saved selections are preserved.",
       "profiles": [
         "Flash-Next DFlash2"
       ]
@@ -127,13 +127,13 @@
       "pr": 95,
       "summary": "Retain the measured .97 memory fraction for the native MTP FR-Spec recipe, separate from the DFlash2 .95 default.",
       "profiles": [
-        "Flash-Next (deprecated native MTP)"
+        "Flash-Next (native MTP)"
       ]
     },
     {
-      "id": "native_mtp_deprecation",
+      "id": "native_mtp_maintained_default",
       "pr": 94,
-      "summary": "Native NEXTN MTP Flash-Next profiles remain launchable with unchanged recipes but are deprecated: no further updates or testing.",
+      "summary": "Native NEXTN MTP Flash-Next profiles are the maintained default for new setups with unchanged recipes, updates and testing; Flash-Next DFlash2 stays fully available as an opt-in.",
       "profiles": [
         "Flash-Next",
         "Flash-Next non-FR"
@@ -157,7 +157,7 @@
     }
   ],
   "settings": {
-    "default_profile": "next-dflash2",
+    "default_profile": "next",
     "flash_next_dflash2_mem_fraction_static": 0.95,
     "flash_next_dflash2_max_running_requests": 6,
     "flash_next_dflash2_max_mamba_cache_size": 36,

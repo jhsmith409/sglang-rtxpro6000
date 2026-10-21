@@ -69,12 +69,13 @@ and manage the files yourself. Restart the server to apply changed settings.
 
 ## What the settings mean
 
-- **Profile:** Flash-Next with the DFlash2 draft and the FR-Spec map
-  (`next-dflash2`, the default for new setups), 27B with its DFlash2 draft
-  (`27b`), or the two deprecated native-MTP Flash-Next profiles (`next` with
-  FR-Spec, `next-plain` without it). The deprecated profiles keep their
-  existing recipes and still launch; they receive no further updates or
-  testing. The two DFlash2 profiles need both model folders. FR-Spec and
+- **Profile:** Flash-Next with native NEXTN MTP and the FR-Spec map
+  (`next`, the default for new setups) or without it (`next-plain`),
+  Flash-Next with the DFlash2 draft and the FR-Spec map
+  (`next-dflash2`, optional), or 27B with its DFlash2 draft (`27b`).
+  Every profile keeps its existing recipe, and an explicitly saved
+  choice is never rewritten by the default. The two DFlash2 profiles need both
+  model folders. FR-Spec and
   adaptive width routing work together on `next-dflash2`; they are not
   competing profile choices. See
   [RUN.md](RUN.md#launch-flash-next-with-dflash2) for what the routed profile

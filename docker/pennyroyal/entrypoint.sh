@@ -28,22 +28,22 @@ done
 # and a baked default could not be told apart from one.
 export TILELANG_CACHE_DIR="${TILELANG_CACHE_DIR:-$CACHE_BASE/tilelang}"
 
-profile="${1:-next-dflash2}"
+profile="${1:-next}"
 if (( $# )); then shift; fi
 case "$profile" in
   --help|-h)
     printf '%s\n' \
       'Pennyroyal container' \
-      '  next-dflash2  Flash-Next NVFP4 + DFlash2 / FR-Spec (default)' \
-      '  next          Flash-Next NVFP4 + FR-Spec/native NEXTN MTP (deprecated)' \
-      '  next-plain    Flash-Next NVFP4 + native NEXTN MTP without FR-Spec (deprecated)' \
+      '  next          Flash-Next NVFP4 + FR-Spec/native NEXTN MTP (default)' \
+      '  next-plain    Flash-Next NVFP4 + native NEXTN MTP without FR-Spec' \
+      '  next-dflash2  Flash-Next NVFP4 + DFlash2 (DFLASH, FR-Spec, routed widths)' \
       '  27b           Qwen3.8-27B FP8 + DFlash2' \
       '  --check       Check installed packages and POSIX plugin without a GPU' \
       '  exec CMD      Run an explicit utility command inside the image' \
-      'The deprecated native-MTP profiles still run and are unchanged; they get' \
-      'no further updates or testing. Set TARGET_MODEL; the DFlash2 profiles' \
-      'also need DRAFT_MODEL. Mount model directories read-only and writable' \
-      '/cache and /nixl directories. See the container guide.'
+      'The native-MTP profiles are the maintained default; the DFlash2' \
+      'profiles are optional opt-ins with their own recipes. Set TARGET_MODEL;' \
+      'the DFlash2 profiles also need DRAFT_MODEL. Mount model directories' \
+      'read-only and writable /cache and /nixl directories. See the container guide.'
     exit 0 ;;
   --check) exec "$PYTHON" "$REPO_ROOT/docker/pennyroyal/check_install.py" ;;
   exec)

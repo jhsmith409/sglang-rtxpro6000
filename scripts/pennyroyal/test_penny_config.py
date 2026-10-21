@@ -703,8 +703,8 @@ class DiscoveryTests(FixtureMixin):
 
     def test_missing_file_uses_defaults_instead_of_failing(self):
         config = pc.load_config("native", self.base / "nope.env", {}, self.repo)
-        # New setups default to the routed Flash-Next DFlash2 profile.
-        self.assertEqual(config.profile, "next-dflash2")
+        # New setups default to the maintained native-MTP FR-Spec profile.
+        self.assertEqual(config.profile, "next")
         self.assertEqual(config.values, {})
 
     def test_unknown_profile_is_rejected(self):
@@ -1721,8 +1721,9 @@ class ContainerPlanTests(FixtureMixin):
         )
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertIn(str(self.host_root), run.stdout)
-        # The compose default draft follows the default profile (next-dflash2);
-        # the 27b command above still overrides everything it saves.
+        # The compose file still defaults DRAFT_MODEL to the optional
+        # next-dflash2 profile's draft; the 27b command above still overrides
+        # everything it saves.
         self.assertIn("/models/incoai-Qwen3.8-Flash-Next-DFlash2", run.stdout)
 
     def test_models_root_needs_readability_not_writability(self):
@@ -1898,11 +1899,12 @@ class ContainerPlanTests(FixtureMixin):
         run_sh = self.generated(plan)[self.base / "launch out" / "run.sh"]
         self.assertIn("  -e SGLANG_HICACHE_TORCH_PINNED_ALLOC=false\n", run_sh)
 
-    def test_a_default_container_save_generates_the_routed_dflash2_launch(self):
-        # The default profile's generated launch is the routed DFlash2 pair:
-        # run.sh points at the new startup file with the release default image,
-        # and that file carries the qualified width, FR-Spec map, policy and
-        # graph settings — with the retired block-width knob gone.
+    def test_an_explicit_dflash2_save_generates_the_routed_launch(self):
+        # A saved explicit next-dflash2 choice survives the default change:
+        # the generated launch is still the routed DFlash2 pair — run.sh
+        # points at its startup file with the release default image, and that
+        # file carries the qualified width, FR-Spec map, policy and graph
+        # settings — with the retired block-width knob gone.
         (self.host_root / "incoai-Qwen3.8-Flash-Next-DFlash2").mkdir()
         plan = self.container_plan(self.base_values(), profile="next-dflash2")
         self.assertEqual([i.message for i in plan.errors], [])

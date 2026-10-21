@@ -233,15 +233,23 @@ class ProfileRoutingTests(config_suite.FixtureMixin, unittest.TestCase):
             plan.summary[1],
         )
 
-    def test_the_routed_profile_is_the_default_for_new_setups(self):
-        # A fresh setup starts on DFlash2 in both modes; the deprecated NEXTN
-        # profiles stay selectable and say so in their labels.
-        self.assertEqual(pc.default_profile("native"), "next-dflash2")
-        self.assertEqual(pc.default_profile("container"), "next-dflash2")
-        for deprecated in ("next", "next-plain"):
-            self.assertIn("deprecated", pc.PROFILE_LABEL[deprecated])
+    def test_native_mtp_is_the_default_and_labels_stay_maintained(self):
+        # A fresh setup starts on the maintained native-MTP FR-Spec profile in
+        # both modes, and no current profile label calls anything deprecated.
+        self.assertEqual(pc.default_profile("native"), "next")
+        self.assertEqual(pc.default_profile("container"), "next")
+        for maintained in ("next", "next-plain"):
+            self.assertNotIn("deprecated", pc.PROFILE_LABEL[maintained])
         self.assertNotIn("deprecated", pc.PROFILE_LABEL["next-dflash2"])
         self.assertNotIn("deprecated", pc.PROFILE_LABEL["27b"])
+        # The explicit DFlash2 choice survives, saved file or ambient: an
+        # operator who picked next-dflash2 keeps it across the default change.
+        saved = pc.config_from_text(
+            "native", f"{pc.PROFILE_KEY}=next-dflash2", None, "test"
+        )
+        self.assertEqual(saved.profile, "next-dflash2")
+        ambient = pc.load_config("native", None, {pc.PROFILE_KEY: "next-dflash2"}, REPO)
+        self.assertEqual(ambient.profile, "next-dflash2")
 
     def test_the_draft_is_required_and_a_wrong_target_is_still_a_mixup(self):
         plan = self.native_plan(self.native_env(), profile="next-dflash2")

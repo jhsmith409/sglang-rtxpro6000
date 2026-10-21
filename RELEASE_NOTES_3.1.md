@@ -1,18 +1,19 @@
 # Penny Royal 3.1
 
-Penny Royal 3.1 makes DFlash2 with FR-Spec the default for Qwen3.8 Flash-Next
-and replaces the preset KV-token cap with automatic pool sizing. Qwen3.8-27B FP8 with DFlash2 remains the second
+Penny Royal 3.1 keeps native NEXTN MTP with FR-Spec as the maintained default
+for Qwen3.8 Flash-Next, adds Flash-Next DFlash2 with FR-Spec as an optional
+profile, and replaces the preset KV-token cap with automatic pool sizing. Qwen3.8-27B FP8 with DFlash2 remains the second
 supported profile. The target is RTX PRO 6000 Blackwell with one card (TP1) or
 two (TP2).
 
 ## Flash-Next gets its own DFlash2 draft
 
-The new default profile (`PENNYROYAL_PROFILE=next-dflash2`) runs the accepted
+The optional profile (`PENNYROYAL_PROFILE=next-dflash2`) runs the accepted
 OrcaRouter ModelOpt NVFP4 Flash-Next target — same weights, same precision,
 same cache stack — against the separate
 [`incoai/Qwen3.8-Flash-Next-DFlash2`](https://huggingface.co/incoai/Qwen3.8-Flash-Next-DFlash2)
 draft at full 524,288-token context. That draft is the one new download this
-release. The profile ships with the 65,536-ID FR-Spec map, the resident
+release, needed only for the optional profile. The profile ships with the 65,536-ID FR-Spec map, the resident
 rowwise-FP8 output head shared with the target (PR90), candidate projection
 through the FR-Spec map (PR93), a `.95` static memory fraction for
 image-workload headroom, 6 requests / 36 Mamba slots, a 2,048-token draft
@@ -25,9 +26,11 @@ TP2 is expected to work; it has not been tested on two-GPU hardware.
 running request, block 4 for every batch of two or more, read from the bundled
 policy `configs/pennyroyal/adaptive-dflash2.json`.
 
-**Native NEXTN MTP is deprecated.** The `next` and `next-plain` profiles
-remain available, with and without FR-Spec respectively. They receive no
-further updates or testing. New setups use the DFlash2 profile.
+**Native NEXTN MTP is the maintained default.** The `next` and `next-plain`
+profiles keep their existing recipes, with and without FR-Spec respectively,
+and continue to receive updates and testing. New setups use the native-MTP
+profile; `next-dflash2` stays fully available as an opt-in, and a saved
+explicit choice is preserved.
 
 ## KV pool sizing is automatic
 
@@ -68,7 +71,7 @@ sampling. Full conditions and source labels are in
 |---|---:|---:|
 | Flash-Next DFlash2 — presentation workflow (agentic), C1 W6 (final candidate source `a60f442`) | **194.56** | **421.35** |
 | Flash-Next — coding flow, C1 W6 (`5ca3f39`) | 235.60 | 417.50 |
-| Flash-Next DFlash2 — single request, C1 W6 (current default) | **228.44** | **336.20** |
+| Flash-Next DFlash2 — single request, C1 W6 (optional DFlash2 profile) | **228.44** | **336.20** |
 | Flash-Next — single request, C1 W4 (`5ca3f39`) | 214.18 | 306.44 |
 | Flash-Next — full six-request batch, aggregate, W4 (`5ca3f39`) | 566.14 | 657.52 |
 | 27B DFlash2 — single request, fixed W8 (`27f9eaa`) | 133.06 | 232.07 |
