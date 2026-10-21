@@ -155,16 +155,16 @@ def test_the_draft_is_part_of_the_cache_identity(tmp_path):
     trained = relaunch("trained")
     # Same target, same settings, different draft weights: the persistent KV
     # cache may not be shared, because what the draft proposes differs.
-    retuned = relaunch("retuned")
-    assert retuned != trained
+    updated_draft = relaunch("updated_draft")
+    assert updated_draft != trained
     # And the namespace is stable for an unchanged draft, not re-keyed per boot.
-    assert relaunch() == retuned
+    assert relaunch() == updated_draft
     # A different verification width changes the draft's block layout, so it is
     # identity too rather than a reuse of the same captured blocks.
-    assert relaunch(SPECULATIVE_NUM_DRAFT_TOKENS="8") != retuned
+    assert relaunch(SPECULATIVE_NUM_DRAFT_TOKENS="8") != updated_draft
     # The accepted GDN accumulate mode is cache identity here as it is on the
     # other Flash-Next profiles.
-    assert relaunch(FLASHINFER_GDN_FP16_ACCUM_MMA="0") != retuned
+    assert relaunch(FLASHINFER_GDN_FP16_ACCUM_MMA="0") != updated_draft
     # With the disk tier off the namespace is simply not derived.
     assert relaunch(NIXL="off") == "unset"
 
