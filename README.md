@@ -89,10 +89,11 @@ images, HiCache RAM prefix caching, and optional NIXL disk caching.
 | **Qwen3.8-27B** | FP8 | DFlash2, with a separate draft model at fixed block 8 | [Qwen FP8](https://huggingface.co/Qwen/Qwen3.8-27B-FP8) · [DFlash2 draft](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) |
 
 I personally run Flash-Next on **one RTX PRO 6000 at C=6**, with **524,288-token
-context** and the KV pool sized automatically from profiled memory; the 3.1
-candidate boot of the optional DFlash2 profile resolved the observed shared
-**target KV pool** of **1,210,944 tokens**. The maintained native-MTP
-profile sizes its pool the same way and reports the resolved number at startup.
+context** and the KV pool sized automatically from profiled memory; the final
+3.1 measurements resolved a shared **target KV pool** of **1,081,792 tokens**
+on the maintained native-MTP profile and **1,210,944 tokens** on the optional
+DFlash2 profile of this system. The profile reports the resolved number at
+startup.
 That pool is shared across active requests and cached prefixes.
 
 ### How draft width is routed
@@ -137,28 +138,32 @@ For 27B alternatives, see the [Swift 27B results](SWIFT-27B.md) and the
 
 ### Flash-Next 3.1
 
-**Native MTP default, single request: 227.54 tok/s mean, 375.90 peak (C1, block 8). DFlash2 with FlashInfer verification: 241.49 mean, 339.53 peak (C1, block 6); 504.80 / 568.90 aggregate (C6, block 4).**
+**Native MTP default: 252.83 tok/s mean / 501.63 peak on a real coding
+workflow, and 216.23 / 525.80 on the ten-slide presentation (agentic), single
+request at block 8.**
 
 Measured on one RTX PRO 6000 Blackwell, using our OrcaRouter ModelOpt NVFP4
-checkpoint, FR-Spec, a 524K context limit, and normal non-greedy sampling on
-the final 3.1 candidate source (`a60f442`). Every rate is SGLang's native
-generation rate, including reasoning; prefill, tool execution, and idle time
-are separate.
+checkpoint, FR-Spec, a 524K context limit, and normal non-greedy sampling. The
+native rows are the final October 21 screens on the merged source
+(`fe5f02c`); the DFlash2 rows keep their `a60f442` labels. Every rate is
+SGLang's native generation rate, including reasoning; prefill, tool execution,
+and idle time are separate.
 
 | Profile / workload | Mean tok/s | Sampled peak tok/s |
 |---|---:|---:|
-| Native MTP (maintained default), single request, C1 W8 | **227.54** | **375.90** |
+| Native MTP (maintained default), single request, C1 W8 | **197.87** | **345.30** |
+| Native MTP, full four-request batch, aggregate, C4 W4 | **555.11** | **731.06** |
+| Native MTP, full six-request batch, aggregate, C6 W4 | **472.79** | **528.49** |
+| Native MTP, coding workflow (agentic), C1 W8 | **252.83** | **501.63** |
+| Native MTP, presentation workflow (agentic), C1 W8 | **216.23** | **525.80** |
 | DFlash2 + FlashInfer (optional profile), single request, C1 W6 | **241.49** | **339.53** |
 | DFlash2 + FlashInfer, six concurrent requests, aggregate, C6 W4 | **504.80** | **568.90** |
 | DFlash2 + FlashInfer, presentation workflow (agentic), C1 W6 | **217.19** | **448.70** |
 
-The presentation workflow completed end to end: 70 model turns and 132,873
-output tokens at block 6 with one request generating, and its finished deck
-previewed. The earlier coding and five-slide presentation screens, recorded on
-the DFlash2 Triton verification path, keep their original labels in
-[RESULTS.md](RESULTS.md#earlier-31-decode-screens-on-the-triton-path).
+Both native workflows completed end to end at block 8 with one request
+generating, and the finished presentation deck previewed.
 [Current results](RESULTS.md#penny-royal-31) records the sources, intervals
-and settings behind every number.
+and settings behind every number, plus the dated earlier screens.
 
 | Cold prompt (Flash-Next DFlash2) | Mean prefill tok/s |
 |---|---:|

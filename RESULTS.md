@@ -64,7 +64,11 @@ configuration; these were not matched A/B runs.
 
 | Workload | Mean tok/s | Sampled peak tok/s | Source / configuration |
 |---|---:|---:|---|
-| Native MTP, single request, C1 W8 | **227.54** | **375.90** | `a60f442`, native MTP + FR-Spec, C1 W8 |
+| Native MTP, single request, C1 W8 | **197.87** | **345.30** | `fe5f02c`, native MTP + FR-Spec, C1 W8 |
+| Native MTP, full C4 aggregate, W4 | **555.11** | **731.06** | `fe5f02c`, concurrent W4 tier |
+| Native MTP, full C6 aggregate, W4 | **472.79** | **528.49** | `fe5f02c`, concurrent W4 tier |
+| Native MTP, coding workflow (agentic), C1 W8 | **252.83** | **501.63** | `fe5f02c`, medium verified every turn |
+| Native MTP, presentation workflow (agentic), C1 W8 | **216.23** | **525.80** | `fe5f02c`, explicit medium reasoning |
 | DFlash2 + FlashInfer, single request, C1 W6 | **241.49** | **339.53** | `a60f442`, optional profile, routed W6 |
 | DFlash2 + FlashInfer, full C6 aggregate | **504.80** | **568.90** | `a60f442`, concurrent W4 tier |
 | DFlash2 + FlashInfer, presentation workflow (agentic), C1 W6 | **217.19** | **448.70** | `a60f442`, explicit medium reasoning |
@@ -73,17 +77,60 @@ The normal decode screens used 128-token inputs and a 1,024-token output
 ceiling, three repeats with seeds 42/43/44, xhigh reasoning, temperature 0.8,
 top-p 0.95, top-k 40 and min-p 0.05. Rates include reasoning and use complete
 active-decode intervals, excluding the initial idle/prefill interval and
-unlogged tails. Full-C6 rates also exclude batch fill and drain.
+unlogged tails. Full-C rates also exclude batch fill and drain.
 
 The FlashInfer C1 screen contains 21 complete intervals over 10.687586
-seconds; full C6 contains 17 over 20.495504 seconds. The native C1 screen
-contains 22 intervals over 11.171146 seconds. It used C1/W8 in a test profile
-whose concurrent tier was W6; the release uses C2+/W4. Only that test's C1
-result is shown here.
+seconds; full C6 contains 17 over 20.495504 seconds.
 
-The separate medium coding attempt measured 259.38 / 439.28 tok/s but ended
-unfinished. It is retained as first-pass timing evidence, not a completed
-coding benchmark.
+The separate medium coding attempt on the optional DFlash2 profile measured
+259.38 / 439.28 tok/s but ended unfinished. It is retained as first-pass
+timing evidence, not a completed coding benchmark.
+
+### Final native MTP screens and workflows (October 21, 2026)
+
+Measured on the merged final source
+`fe5f02ccacb50d3aea10bea2044a9816292e120f` (service invocation
+`87586b6cfec84b60af6ef6de17f78715`): native NEXTN MTP with FR-Spec at the
+maintained default routing (block 8 at one running request, block 4 at two or
+more), `.97` static memory fraction at 6 requests / 36 Mamba slots, 524,288-
+token context, automatic KV pool sizing (the boot resolved a 1,081,792-token
+target pool), 32-decimal-GB HiCache with NIXL, diagnostics off, one RTX PRO
+6000 with an A4000 preprocessing sidecar. The decode screens used one-wave
+random 128-input / 1,024-output prompts, three repeats per concurrency at
+seeds 42/43/44, normal non-greedy sampling (temperature 0.8, top-p 0.95,
+top-k 40, min-p 0.05), xhigh reasoning, `ignore_eos` false, warmup 0. All
+nine runs were isolated with no errors. Means are elapsed-weighted complete
+active-decode intervals; peaks are the highest eligible logged rate from the
+same windows; reasoning is included and each request's first
+idle/prefill-crossing rate, unlogged tails, tools and waits are excluded.
+Full-C means use only adjacent interval endpoints at the configured
+concurrency with no intervening prefill; fill and drain are excluded and
+aggregates are never divided by C.
+
+Single-request screen: 197.87 / 345.30 tok/s over 25 intervals spanning
+12.97803 seconds. Full C4 aggregate: 555.11 / 731.06 over 28 intervals
+spanning 18.475742 seconds. Full C6 aggregate: 472.79 / 528.49 over 26
+intervals spanning 29.326962 seconds. These supersede the earlier native C1
+screen recorded at `a60f442` (227.54 / 375.90, 22 intervals over 11.171146
+seconds, measured in a test profile whose concurrent tier was W6); that row
+remains dated single-request evidence.
+
+The real coding workflow (log-triage CLI, tests, offline HTML) ran at medium
+reasoning verified every turn: 252.83 / 501.63 tok/s, 27 model turns matched
+to 27 server requests, 38,402 server output tokens including reasoning, 256
+complete C1 intervals over 133.632276 seconds, prompt growth 9,300 to 51,591
+tokens, block 8 throughout, one natural completion with no correction passes.
+The workflow's 16 existing tests passed independently.
+
+The real ten-slide presentation workflow (agentic) ran through ordinary
+OWUI/PPTMaster tooling at explicitly assigned medium: 216.23 / 525.80 tok/s,
+80 model turns matched to 80 server requests, 133,430 server output tokens
+including reasoning, 1,015 complete C1 intervals over 558.962449 seconds,
+prompt growth 42,534 to 238,546 tokens, block 8 throughout. The deck delivered
+10 slides with 10 notes plus PDF and preview (one preview inspection); total
+workflow time including tools and rendering was 824.132 seconds (13 minutes 44
+seconds), separate from decode. No other requests or runtime errors occurred.
+Native width was W8 throughout both workflows.
 
 ### Earlier 3.1 decode screens on the Triton path
 
@@ -120,7 +167,7 @@ the other.
 
 Server initial-prefill timing on cold, uncached prompts. The Flash-Next
 column was recorded on the DFlash2 profile during its qualification and
-remains accurate there; no native-MTP re-screen exists for this candidate.
+remains accurate there; no native-MTP prefill re-screen exists for this candidate.
 Prefill is not speculative.
 
 ### 27B DFlash2 rates
@@ -183,12 +230,15 @@ these local numbers are from one inference card.
 | Coding, 21 model turns / 21,193 output tokens | 262.32 | 518.18 |
 | Presentation, 113 model turns / 164,934 output tokens | 239.53 | 543.72 |
 | Regular C1 | 218.63 | 326.56 |
-| Regular C4, aggregate | 489.35 | 636.71 |
-| Regular C6, aggregate | 433.54 | 606.48 |
+| Configured C4, aggregate, includes fill/drain | 489.35 | 636.71 |
+| Configured C6, aggregate, includes fill/drain | 433.54 | 606.48 |
 
 The regular screens used three repeats, 128 input tokens and 1,024 output
 tokens per request, temperature 0.8, top-p 0.95, top-k 40, min-p 0.05 and xhigh
-reasoning. The completed coding workflow used medium reasoning. The
+reasoning. Those October 10 C4/C6 rows include batch fill and drain, and full-
+batch samples were not retained for them, so they are not used as full-
+concurrency baselines. Use the corrected 3.0.2
+full-batch reference below for that. The completed coding workflow used medium reasoning. The
 presentation ran through the normal presentation tools with unchanged client
 settings; its exact client overrides were not retained. These are separate
 workloads, not a matched reasoning-effort comparison.
@@ -221,6 +271,27 @@ tracked separately.
 [Machine-readable release record](release-3.0.json) includes exact settings,
 validation scope and measured memory stages. Earlier measurements below keep
 their original dates and timing methods.
+
+### Corrected 3.0.2 full-batch reference
+
+The published 3.0.2 current-RC concurrency baselines were recomputed on
+October 21, 2026 from the retained raw samples of the same runs on source
+`81f006db32978519d09302b9984016d6e1bfd48b`, invocation
+`4568fcb7ce014906950e7fb4b2480214`:
+
+| Workload | Full-batch mean tok/s | Sampled peak tok/s |
+|---|---:|---:|
+| Full C4 aggregate, block 4 | 532.05 | 644.96 |
+| Full C6 aggregate, block 4 | 477.53 | 705.98 |
+
+Full C4 covers 71 intervals over 47.652033 seconds; full C6 covers 63
+intervals over 71.398232 seconds. The means exclude batch fill and drain and
+the peaks are unchanged from the original record. Protocol and settings are as
+originally recorded: the older queued 12/18-request ShareGPT protocol, 128
+input / 1,024 output tokens, three repeats, normal non-greedy sampling with
+xhigh, private diagnostics on. The corrected values replace the drain-inclusive
+means 496.12604 and 457.50336 in
+[release-3.0.2.json](release-3.0.2.json); no new tests were run.
 
 ### Recorded comparison with 2.5.3
 

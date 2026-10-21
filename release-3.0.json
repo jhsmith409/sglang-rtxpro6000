@@ -394,7 +394,7 @@
         "peak_tps": 606.48,
         "aggregate": true
       },
-      "aggregate_note": "C4/C6 are aggregate, never per-request",
+      "aggregate_note": "C4/C6 are aggregate, never per-request; these configured-batch means include fill and drain (only aggregates were retained and the raw decode journals are gone, so full-batch-only means cannot be recomputed; not a full-concurrency baseline)",
       "vs_earlier_attention_fullpool_screen_mean_pct": {
         "C1": 3.19,
         "C4": 0.51,

@@ -249,6 +249,26 @@
   "performance": {
     "native_mean_and_sampled_peak_tok_s": {
       "flash_next_native_mtp_normal_c1_w8": [
+        197.86897076212645,
+        345.3
+      ],
+      "flash_next_native_mtp_full_c4_aggregate_w4": [
+        555.111999049348,
+        731.06
+      ],
+      "flash_next_native_mtp_full_c6_aggregate_w4": [
+        472.78533751467336,
+        528.49
+      ],
+      "flash_next_native_mtp_coding_agentic_c1w8_medium": [
+        252.83016710432761,
+        501.63
+      ],
+      "flash_next_native_mtp_presentation_agentic_c1w8_medium": [
+        216.23307509654458,
+        525.8
+      ],
+      "flash_next_native_mtp_normal_c1_w8_earlier_a60f442": [
         227.54,
         375.9
       ],
@@ -314,10 +334,13 @@
         "27b": 1677.1
       }
     },
+    "final_native_screens": "Recorded 2026-10-21 on merged final source fe5f02ccacb50d3aea10bea2044a9816292e120f (service invocation 87586b6cfec84b60af6ef6de17f78715): native NEXTN MTP + FR-Spec, maintained default routing (C1 block 8, two-or-more block 4), .97 static memory fraction at 6 requests / 36 Mamba slots, 524,288-token context, automatic KV pool sizing resolving to a 1,081,792-token target pool, 32 decimal GB HiCache with NIXL, diagnostics off, one RTX PRO 6000 with an A4000 preprocessing sidecar. One-wave random 128-input / 1,024-output screens, three repeats per concurrency at seeds 42/43/44, normal non-greedy sampling, xhigh, ignore_eos false, warmup 0; all nine runs isolated with no errors. Single-request screen 25 intervals over 12.97803 s; full C4 28 intervals over 18.475742 s; full C6 26 intervals over 29.326962 s. These supersede the earlier native C1/W8 screen at a60f442 (227.54/375.90, 22 intervals over 11.171146 s, a test profile with a W6 concurrent tier), retained as dated C1 evidence.",
+    "native_coding_detail": "Real coding workflow (log-triage CLI, tests, offline HTML) at C1 block 8 with medium verified every turn: 27 model turns matched 27 server requests, 38,402 server output tokens including reasoning, 256 complete C1 intervals over 133.632276 s, prompt growth 9,300 to 51,591 tokens; the workflow's 16 existing tests passed independently; one natural completion with no correction passes; 252.83016710432761 mean / 501.63 peak.",
+    "native_presentation_detail": "Real ten-slide agentic presentation via ordinary OWUI/PPTMaster tooling at C1 block 8 with explicitly assigned medium: 80 model turns matched 80 server requests, 133,430 server output tokens including reasoning, 1,015 complete C1 intervals over 558.962449 s, prompt growth 42,534 to 238,546 tokens; PPTX with 10 slides and 10 notes plus PDF and preview secured (one preview inspection); total workflow time including tools and rendering 824.132 s (13 m 44 s), separate from decode; no other requests or runtime errors; 216.23307509654458 mean / 525.80 peak.",
     "presentation_detail": "Real agentic ten-slide workflow on final source a60f442 at C1 W6 with FlashInfer verification and explicit medium reasoning effort: 70 model turns matched 70 server requests, 1,075 complete decode intervals over 570.391832 s, 132,873 server output tokens including reasoning, prompt growth 42,527 to 206,219 tokens; the workflow completed on the normal presentation tools and the finished deck previewed; total workflow time including tools and rendering was 13 minutes 44 seconds. The earlier five-slide xhigh screen on the Triton verification path (194.56/421.35; 121 turns, 192,349 output tokens, 1,676 intervals over 909.385 s, prompt 42,637 to 253,267, 33 minutes 25 seconds total) is retained as dated history; the runs differ in slide count and effort setting.",
     "coding_flow_note": "The medium-effort coding rerun on a60f442 (259.38/439.28) did not complete, and its handoff does not accept it as a new published coding benchmark. The accepted coding-flow timing (235.60/417.50, 5ca3f39, Triton path) remains dated history.",
-    "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak from the same window, including reasoning; normal non-greedy sampling (temperature 0.8, top-p 0.95, top-k 40, min-p 0.05), 128-token inputs, 1,024-token output ceiling, three repeats at seeds 42, 43 and 44; xhigh reasoning for the matched screens, explicit medium for the ten-slide presentation. Rows keep their recorded source/configuration labels: a60f442 for the native-MTP C1/W8, FlashInfer DFlash2 and presentation screens; 5ca3f39 for the dated fixed-W4 and coding-flow screens; 27f9eaa for the 27B fixed-W8 screens. C4/C6 rows are aggregate over the full running batch, not per-request rates. The native-MTP full-batch screen at the routed W4 width does not exist yet; only its C1/W8 rate is shown, so no native-versus-DFlash2 full-batch comparison is made. The corrected full-batch means supersede the earlier drain-inclusive 522.69/386.26 summaries.",
-    "completion_facts": "The ten-slide presentation completed end to end on a60f442 with all 70 turns matched one-to-one and the deck previewed; the earlier coding-flow completion fact is recorded in the qualification notes, separate from its accepted timing; the new medium coding rerun is unfinished and not accepted.",
+    "conditions": "Native elapsed-weighted complete active-decode intervals and sampled peak from the same window, including reasoning. The normal decode screens used 128-token inputs, a 1,024-token output ceiling, three repeats at seeds 42, 43 and 44, and normal non-greedy sampling (temperature 0.8, top-p 0.95, top-k 40, min-p 0.05) with xhigh reasoning, ignore_eos false and warmup 0; the completed workflows used their normal non-greedy client sampling with medium reasoning verified. Rows keep their recorded source/configuration labels: fe5f02cc for the final native-MTP screens and workflows (invocation 87586b6cfec84b60af6ef6de17f78715, conditions in final_native_screens); a60f442 for the superseded native C1/W8 screen, the FlashInfer DFlash2 and DFlash2 presentation screens; 5ca3f39 for the dated fixed-W4 and coding-flow screens; 27f9eaa for the 27B fixed-W8 screens. C4/C6 rows are aggregate over the full running batch, not per-request rates; full-C means use only adjacent interval endpoints at the configured concurrency with no intervening prefill, exclude batch fill and drain, and are never divided by C. The corrected full-batch means supersede the earlier drain-inclusive 522.69/386.26 summaries.",
+    "completion_facts": "The native coding and ten-slide presentation workflows completed end to end naturally on fe5f02cc at C1 block 8 with all turns matched one-to-one and the finished deck secured; the DFlash2 ten-slide presentation completed on a60f442 with all 70 turns matched one-to-one and the deck previewed; the earlier coding-flow completion fact is recorded in the qualification notes, separate from its accepted timing; the DFlash2 medium coding rerun is unfinished and not accepted.",
     "hardware_note": "All local numbers are one RTX PRO 6000 at TP1; TP2 on the optional DFlash2 profile is expected to work and has not been tested on two-GPU hardware."
   },
   "upgrade": {
