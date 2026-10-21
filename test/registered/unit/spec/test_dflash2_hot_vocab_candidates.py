@@ -109,9 +109,7 @@ def _contract_topk(scores, k, sorted=False, deterministic=False):
 
 
 def _use_cpu_top_k(monkeypatch):
-    monkeypatch.setattr(
-        "sglang.srt.models.dflash._flashinfer_top_k", _contract_topk
-    )
+    monkeypatch.setattr("sglang.srt.models.dflash._flashinfer_top_k", _contract_topk)
 
 
 def _tp1(monkeypatch):
@@ -265,7 +263,9 @@ def test_hot_anchor_and_q_reach_the_real_acceptance_scatter(monkeypatch):
     anchor_token_ids = torch.tensor([15, hot_ids[0]], dtype=torch.int64)
     # The one lattice helper drives both the graph-folded sampler and the eager
     # fallback, so this covers the two paths' shared candidate contract.
-    candidate_ids, scores = worker_mod._selector_lattice(model, hidden, anchor_token_ids)
+    candidate_ids, scores = worker_mod._selector_lattice(
+        model, hidden, anchor_token_ids
+    )
     assert candidate_ids.shape == (2, slots, top_k)
     assert scores.shape == (2, slots, top_k, top_k)
     assert torch.isfinite(scores).all()
