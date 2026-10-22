@@ -59,8 +59,7 @@ def _install_required_hook_enforcement(HookRegistry, required_hooks) -> None:
             if already_patched:
                 raise SystemExit(
                     "Pennyroyal NVMe PLE required hooks were patched before "
-                    "NVMe registration: "
-                    + ", ".join(sorted(already_patched))
+                    "NVMe registration: " + ", ".join(sorted(already_patched))
                 )
 
         current(cls)
