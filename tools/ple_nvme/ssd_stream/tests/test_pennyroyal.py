@@ -77,19 +77,27 @@ def test_payload_hash_is_checked(tmp_path):
         config.verify_tables(artifact)
 
 
-def test_source_guard_rejects_modified_module(monkeypatch, tmp_path):
-    fake = tmp_path / "module.py"
-    fake.write_text("changed source")
+def test_registration_accepts_modified_runtime_sources(
+    monkeypatch, isolated_hook_registry
+):
+    import importlib.util
     from types import SimpleNamespace
 
-    # Import before patching find_spec so dependency discovery isn't mocked.
-    from sglang.srt.plugins import hook_registry  # noqa: F401
+    real_find_spec = importlib.util.find_spec
+    changed = Path(__file__)
 
-    monkeypatch.setattr(
-        plugin.importlib.util, "find_spec", lambda _: SimpleNamespace(origin=str(fake))
-    )
-    with pytest.raises(RuntimeError, match="SHA-256"):
-        plugin._register_pennyroyal()
+    def modified_spec(name):
+        # Any remaining gate that compares runtime module bytes against a
+        # shipped source manifest must not reject these changed sources.
+        if name.startswith("sglang.srt."):
+            return SimpleNamespace(origin=str(changed))
+        return real_find_spec(name)
+
+    monkeypatch.setattr(importlib.util, "find_spec", modified_spec)
+    plugin._register_pennyroyal()
+    assert {
+        target: len(HookRegistry._hooks[target]) for target in REQUIRED_HOOK_TARGETS
+    } == {target: 1 for target in REQUIRED_HOOK_TARGETS}
 
 
 @pytest.mark.parametrize("failed_target", REQUIRED_HOOK_TARGETS)

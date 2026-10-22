@@ -57,7 +57,7 @@ the explicit mode, protecting RAM/27B startup from plugin auto-discovery.
 The launcher requires Pennyroyal adapter build `0.2.0+pennyroyal2`; older local
 adapter builds are rejected because they lack the complete hook-application guard.
 
-The launcher checks source compatibility and source/overlay identity. Server
+The launcher checks source/overlay identity. Server
 startup hashes the external PLE table before workers start; allow time for this
 sequential read. An invalid artifact or incompatible runtime fails startup.
 NVMe uses a separate NIXL namespace carrying its manifest identity; old caches
@@ -75,11 +75,11 @@ established prior integration against Penny v2.3.0. Its later NVFP4-pinned PLE
 branch is not this FP8 streaming path.
 
 The reader, gather implementation and graph adapter are unchanged from that
-release. Local changes are opt-in/fail-loud registration, exact Penny source
-guards, payload checksum validation and launcher/artifact preparation. The
-upstream CLI runtime installer is not exposed by this package; no replacement
-QSA/MTP runtime payload is included. The adapter retains Penny's hash calculation
-but replaces the pinned-table gather with SSD row staging.
+release. Local changes are opt-in/fail-loud registration, payload checksum
+validation and launcher/artifact preparation. The upstream CLI runtime installer
+is not exposed by this package; no replacement
+QSA/MTP runtime payload is included. The adapter retains Penny's table payload
+hashing but replaces the pinned-table gather with SSD row staging.
 
 This integration is limited to the qualified TP1 Flash-Next configuration on
 Linux x86_64 with Python3.12. It does not claim support for TP2, CPU expert

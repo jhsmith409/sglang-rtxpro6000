@@ -1,5 +1,3 @@
-import hashlib
-import json
 import os
 import subprocess
 from pathlib import Path
@@ -13,15 +11,6 @@ HELPER = REPO / "configs" / "pennyroyal" / "ple-backend.sh"
 NEXT_RECIPES = (
     REPO / "configs" / "pennyroyal" / "serve-flash-next-frspec.sh",
     REPO / "configs" / "pennyroyal" / "serve-flash-next.sh",
-)
-GUARD = (
-    REPO
-    / "tools"
-    / "ple_nvme"
-    / "ssd_stream"
-    / "src"
-    / "sglang_ssd_stream"
-    / "pennyroyal-source.json"
 )
 
 
@@ -233,18 +222,3 @@ def test_next_recipes_initialize_cache_environment_before_nvme_preflight(tmp_pat
             check=False,
         )
         assert observed.read_text() == "ready", (recipe, result.stderr)
-
-
-def test_source_guard_matches_every_hooked_publication_module():
-    guard = json.loads(GUARD.read_text())
-    assert guard["source"].startswith("Pennyroyal v3.0.1")
-    assert "sglang.srt.models.qwen4_exp" in guard["modules"]
-
-    for module, expected in guard["modules"].items():
-        path = REPO / "python" / Path(*module.split("."))
-        if path.with_suffix(".py").is_file():
-            path = path.with_suffix(".py")
-        else:
-            path = path / "__init__.py"
-        assert path.is_file(), module
-        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, module

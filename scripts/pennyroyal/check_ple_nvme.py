@@ -357,7 +357,7 @@ def check(source: Path, prepared: Path) -> str:
         _manifest_table_relatives(manifest),
     )
     _load_ssd_stream_entrypoint(plugin.register)
-    plugin._register_pennyroyal()  # Source-hash and native-extension import checks.
+    plugin._register_pennyroyal()  # Architecture and native-extension import checks.
     return sha256(manifest_path)
 
 
