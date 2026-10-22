@@ -32,10 +32,9 @@ feature list and performance results.
 - [@desva](https://github.com/desva) — NVMe PLE startup failure report.
 - [Penny Royal](mailto:Pennyroyal@agentmail.to) — fix implementation.
 
-## Status
+## Validation
 
-The fix is accepted after an independent regression check on the v3.1.0 base,
-75 passing CPU tests and 9 subtests, lint, and a clean independent review. The
-container build, image digest and CPU package/content verification are pending
-and will be recorded in release-3.1.1.json. NVMe serving verification is
-outside this release's scope.
+75 CPU tests and 9 subtests passed. The release image passed its package
+checks and contains the corrected reader with the obsolete manifest removed.
+Source, image digest and build details are in
+[release-3.1.1.json](release-3.1.1.json).
