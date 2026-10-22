@@ -22,9 +22,13 @@ sizing replaces the preset cap; an explicit `MAX_TOTAL_TOKENS` override remains.
 The 27B FP8 DFlash2 profile
 is unchanged at fixed block 8. Native width routing comes from the bundled
 fixed policy `configs/pennyroyal/adaptive-next.json`, pinned by the launch
-recipes. The published release tag is `pennyroyal-v3.1.0`; the image is
-`ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0`. See release-3.1.json for the
-source identity, checked image digest and build.
+recipes. The current release is Penny Royal 3.1.1, which removes the stale
+whole-module source-hash gate that blocked NVMe PLE startup on 3.1.0; table
+validation, cache identity, explicit NVMe selection and required-hook failure
+handling remain. The planned release tag is `pennyroyal-v3.1.1` and the image
+is `ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.1`; see release-3.1.1.json for
+publication status. The 3.1 feature details, source identity, checked image
+digest and build remain in release-3.1.json and RESULTS.md.
 
 ## Hardware and profiles
 
@@ -111,6 +115,8 @@ actual answer grading on the qualified sources; extended or repetitive
 reasoning is not penalized and `ask_user` is a valid tool choice. Recorded
 deviations are listed with the measurements.
 
+- [3.1.1 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.1.1.md): NVMe PLE source-gate removal and contributor acknowledgements.
+- [3.1.1 machine-readable release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/release-3.1.1.json): Fix identity, validation scope and pending container status.
 - [3.1 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.1.md): maintained native-MTP default, optional Flash-Next DFlash2, fixed concurrency widths, automatic KV sizing, TP2 support and focused scheduler fixes.
 - [3.1 machine-readable release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/release-3.1.json): Source identities, settings, reused qualification and published image identity.
 - [3.0.2 release notes](https://raw.githubusercontent.com/jpezzulli/sglang-rtxpro6000/pennyroyal-main-sm120-final/RELEASE_NOTES_3.0.2.md): Host-memory recovery, MTP switching and focused compatibility fixes.
