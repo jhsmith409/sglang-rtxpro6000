@@ -2,20 +2,28 @@
   "schema": "release-notes/3.1.1",
   "version": "3.1.1",
   "status": {
-    "is_draft": true,
+    "is_draft": false,
     "publication_approved": true,
-    "published": false,
-    "container": "pending build and CPU package/content verification"
+    "published": true,
+    "container": "published"
   },
   "source": {
     "base": "4ec32d3ee05597920dd8a6e11e03999f79efeac3",
     "accepted_fix": "17ad7bd040c9e3bf9b0bd28536a06fc509137631",
-    "planned_tag": "pennyroyal-v3.1.1"
+    "release_tag": "pennyroyal-v3.1.1",
+    "release_url": "https://github.com/jpezzulli/sglang-rtxpro6000/releases/tag/pennyroyal-v3.1.1",
+    "integrated_runtime_revision": "94219ff8a381d54a827e0d488e6bc3233079e78d",
+    "formatting_followup": "eaf4d0c95f9cacacb9e4e3c1a54653cf12d5ba1d"
   },
   "container": {
-    "planned_image": "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.1",
-    "digest": null,
-    "build_url": null
+    "digest": "sha256:f2a6a8caf2d314fdcea37c2448e4548f97ab3ff201fe1e2426861347665da60b",
+    "build_url": "https://github.com/jpezzulli/sglang-rtxpro6000/actions/runs/39778306452",
+    "image": "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.1",
+    "source_revision": "94219ff8a381d54a827e0d488e6bc3233079e78d",
+    "promotion_url": "https://github.com/jpezzulli/sglang-rtxpro6000/actions/runs/39791429713",
+    "compressed_layer_bytes": 7720118669,
+    "unpacked_image_bytes": 16028228922,
+    "note": "Checked image promoted without rebuilding; the release tag also includes final documentation."
   },
   "changes": [
     {
@@ -30,12 +38,15 @@
     "regression": "The original issue gate fails on the v3.1.0 base and passes with the accepted fix.",
     "focused_cpu_checks": "75 tests and 9 subtests passed; pinned lint passed.",
     "review": "Independent review clean.",
-    "pending": [
-      "container build and digest",
-      "CPU package/content verification of the published image"
-    ],
+    "pending": [],
     "nvme_serving": "not run; CPU/static acceptance explicitly accepted",
-    "reused_runtime_qualification": "3.1 qualification and performance in release-3.1.json and RESULTS.md; no changes to model, profile or performance defaults."
+    "reused_runtime_qualification": "3.1 qualification and performance in release-3.1.json and RESULTS.md; no changes to model, profile or performance defaults.",
+    "image_package_check": "Passed the existing image --check on the exact digest with GPUs hidden; package versions, native reader import and NIXL POSIX plugin checked.",
+    "image_contents": {
+      "result": "Both installed and vendored plugin.py match the accepted formatted source; pennyroyal-source.json is absent from both packages; version3.1.1 is present.",
+      "plugin_sha256": "f5abff1f8bebe929048d462baa6742d6ae9d2e1678a8743c25f1641c70940b29",
+      "date": "2026-10-22"
+    }
   },
   "contributors": [
     {
