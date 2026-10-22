@@ -1,0 +1,52 @@
+{
+  "schema": "release-notes/3.1.1",
+  "version": "3.1.1",
+  "status": {
+    "is_draft": true,
+    "publication_approved": true,
+    "published": false,
+    "container": "pending build and CPU package/content verification"
+  },
+  "source": {
+    "base": "4ec32d3ee05597920dd8a6e11e03999f79efeac3",
+    "accepted_fix": "17ad7bd040c9e3bf9b0bd28536a06fc509137631",
+    "planned_tag": "pennyroyal-v3.1.1"
+  },
+  "container": {
+    "planned_image": "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.1",
+    "digest": null,
+    "build_url": null
+  },
+  "changes": [
+    {
+      "issue": 111,
+      "summary": "Remove the obsolete whole-module NVMe PLE reader source-hash gate and its manifest, which still carried v3.0.1 hashes and rejected 3.1.0 startup. Table and artifact validation, cache identity, explicit NVMe selection and required-hook failure handling remain.",
+      "profiles": [
+        "Flash-Next NVMe PLE"
+      ]
+    }
+  ],
+  "validation": {
+    "regression": "The original issue gate fails on the v3.1.0 base and passes with the accepted fix.",
+    "focused_cpu_checks": "75 tests and 9 subtests passed; pinned lint passed.",
+    "review": "Independent review clean.",
+    "pending": [
+      "container build and digest",
+      "CPU package/content verification of the published image"
+    ],
+    "nvme_serving": "not run; CPU/static acceptance explicitly accepted",
+    "reused_runtime_qualification": "3.1 qualification and performance in release-3.1.json and RESULTS.md; no changes to model, profile or performance defaults."
+  },
+  "contributors": [
+    {
+      "name": "desva",
+      "url": "https://github.com/desva",
+      "contribution": "NVMe PLE startup failure report"
+    },
+    {
+      "name": "Penny Royal",
+      "email": "Pennyroyal@agentmail.to",
+      "contribution": "Fix implementation"
+    }
+  ]
+}

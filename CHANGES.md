@@ -1,5 +1,13 @@
 # Penny Royal release history
 
+## 3.1.1 — NVMe PLE startup fix
+
+The NVMe PLE reader's whole-module source-hash guard still carried the v3.0.1
+hashes, so 3.1.0 rejected explicit NVMe PLE selection before the model could
+load. The gate and its source manifest are removed; table and artifact
+validation, cache identity, explicit NVMe selection and required-hook failure
+handling remain. See the [3.1.1 release notes](RELEASE_NOTES_3.1.1.md).
+
 ## 3.1 — Flash-Next DFlash2 option, automatic KV sizing, maintained MTP default
 
 - Flash-Next gains an optional DFlash2 profile with the separate

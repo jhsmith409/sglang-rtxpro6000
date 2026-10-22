@@ -19,7 +19,7 @@ so long-running sessions can pick up from cached history.
 
 [Get started](#build-and-launch) · [Conversation cache](#hicache-and-nixl) ·
 [Performance](#performance) ·
-[3.1 release notes](RELEASE_NOTES_3.1.md) · [Community results](COMMUNITY-RESULTS.md)
+[3.1.1 release notes](RELEASE_NOTES_3.1.1.md) · [Community results](COMMUNITY-RESULTS.md)
 
 **Penny Royal 3.1:** Flash-Next runs native NEXTN MTP with FR-Spec as the
 maintained default profile, with automatic KV pool sizing replacing the preset
@@ -27,6 +27,9 @@ cap; Flash-Next DFlash2 with a separate draft model, fixed concurrency
 width routing (block 6 for one request, block 4 for two or more) and
 FlashInfer draft-token verification is fully available as an optional
 profile.
+
+**3.1.1 patch:** removes the stale source-hash check that blocked NVMe PLE
+startup in 3.1.0.
 
 <a id="hicache-and-nixl"></a>
 
@@ -293,7 +296,7 @@ over what was actually worth keeping.
 | Understand the FP8 and SSD options | [Online FP8](FP8.md) · [NVMe PLE](NVME-PLE.md) |
 | See measurements | [Results and history](RESULTS.md) · [Community reports](COMMUNITY-RESULTS.md) |
 | Read the implementation details | [Backends](BACKENDS.md) · [Memory and persistence](MEMORY-AND-PERSISTENCE.md) |
-| Check changes and source lineage | [3.1 notes](RELEASE_NOTES_3.1.md) · [Machine-readable notes](release-3.1.json) · [History](CHANGES.md) · [Provenance](PROVENANCE.md) |
+| Check changes and source lineage | [3.1.1 notes](RELEASE_NOTES_3.1.1.md) · [Machine-readable notes](release-3.1.1.json) · [History](CHANGES.md) · [Provenance](PROVENANCE.md) |
 | Check known issues | [Limitations](LIMITATIONS.md) |
 | Use an AI assistant for setup | [llms.txt](llms.txt) |
 
@@ -333,7 +336,7 @@ components retain their own licenses.
 <a id="scope-and-limitations"></a>
 <a id="documentation-map"></a>
 
-[Current release notes](RELEASE_NOTES_3.1.md) · [Benchmark history](RESULTS.md) ·
+[Current release notes](RELEASE_NOTES_3.1.1.md) · [Benchmark history](RESULTS.md) ·
 [Configuration reference](CONFIGURATION.md) · [Known issues](LIMITATIONS.md)
 
 <!-- Compatibility anchors for earlier versions of this guide. -->

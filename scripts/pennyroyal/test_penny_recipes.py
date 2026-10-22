@@ -26,7 +26,7 @@ import penny_config as pc  # noqa: E402
 ADAPTIVE_NEXT_SHA256 = (
     "3edaa87d66f535caae0bddb8f457f03fce0f6dc1f4e8091b20495a0dc9da41fb"
 )
-RELEASED_IMAGE = "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.0"
+RELEASED_IMAGE = "ghcr.io/jpezzulli/sglang-rtxpro6000:v3.1.1"
 TOKEN_MAP_SHA256 = "becfa41d394b86c26c632bea8f3c6ea64bbb76d7b238d8673c06afae21269f25"
 # The approved fixed width-routing policy for the Flash-Next DFlash2 profile:
 # one candidate per tier, block 6 at batch 1 and block 4 at batch 2 or more.
