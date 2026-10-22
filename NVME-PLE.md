@@ -106,7 +106,7 @@ it automatically.
 
 ## Startup integrity and persistence
 
-The launcher checks runtime-source compatibility, source config/index/header
+The launcher checks source config/index/header
 identity, and the prepared weight mapping. Ordinary overlay files and
 directories must remain linked to the original checkpoint, including generation,
 image and video configuration; only the deliberate PLE/index rewrites are
@@ -187,7 +187,7 @@ Its [license](tools/ple_nvme/ssd_stream/LICENSE) and
 source. The integration also acknowledges AntigravityAI's
 [Pennyroyal field report](https://github.com/jpezzulli/sglang-rtxpro6000/issues/2).
 
-Pennyroyal adds explicit opt-in/fail-loud registration, exact source and model
+Pennyroyal adds explicit opt-in/fail-loud registration, model identity
 guards, table checksum validation, an offline exact-byte preparer, and launcher
 integration. It uses the isolated reader path rather than the upstream
 all-in-one CLI installer; QSA/MTP remain part of the Pennyroyal runtime. The
